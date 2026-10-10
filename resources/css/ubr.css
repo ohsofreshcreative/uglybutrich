@@ -1,0 +1,160 @@
+/*
+ * Ugly but Rich — panel SaaS (osobny entry Vite, niezależny od stylów strony h2otwock/app.css).
+ */
+@import 'tailwindcss' source(none);
+
+@source "../views/ubr/**/*.blade.php";
+@source "../js/ubr/**/*.js";
+@source "../js/ubr.js";
+
+@theme {
+	--font-sans: 'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--font-display: 'Fredoka', 'Manrope', ui-sans-serif, system-ui, sans-serif;
+
+	--color-ink: #141b2d;
+	--color-ink-soft: #2b3346;
+	--color-gold: #f4b223;
+	--color-gold-soft: #fff4d6;
+	--color-gold-deep: #b97f05;
+	--color-money: #0b6b43;
+	--color-money-soft: #e3f3ea;
+	--color-canvas: #f6f5f1;
+	--color-line: #e8e5dd;
+	--color-ink-muted: #6b7180;
+	--color-danger: #c2410c;
+	--color-danger-soft: #fff1e8;
+
+	--radius-card: 14px;
+	--shadow-card: 0 1px 2px rgb(20 27 45 / 0.04), 0 4px 16px rgb(20 27 45 / 0.04);
+	--shadow-pop: 0 12px 40px rgb(20 27 45 / 0.18);
+}
+
+@layer base {
+	html {
+		-webkit-font-smoothing: antialiased;
+	}
+
+	body {
+		@apply bg-canvas text-ink font-sans text-[14px] leading-relaxed;
+	}
+
+	[x-cloak] {
+		display: none !important;
+	}
+
+	::selection {
+		background: var(--color-gold-soft);
+	}
+
+	select.ubr-input {
+		appearance: none;
+		padding-right: 2.25rem;
+		background-repeat: no-repeat;
+		background-position: right 0.7rem center;
+		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%236b7180' stroke-width='2' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+	}
+}
+
+@utility ubr-card {
+	@apply bg-white rounded-[var(--radius-card)] border border-line shadow-[var(--shadow-card)];
+}
+
+@utility ubr-label {
+	@apply block text-[12px] font-semibold text-ink-soft mb-1.5;
+}
+
+@utility ubr-input {
+	@apply w-full h-10 rounded-[10px] border border-line bg-white px-3 text-[14px] text-ink placeholder:text-ink-muted/70
+		outline-none transition focus:border-ink/40 focus:ring-4 focus:ring-gold/25;
+}
+
+@utility ubr-checkbox {
+	@apply size-4 rounded-[5px] border border-line accent-ink;
+}
+
+@utility ubr-btn {
+	@apply inline-flex items-center justify-center gap-2 h-10 px-4 rounded-[10px] text-[14px] font-semibold whitespace-nowrap
+		transition disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-gold/30;
+}
+
+@utility ubr-btn-primary {
+	@apply ubr-btn bg-ink text-white hover:bg-ink-soft;
+}
+
+@utility ubr-btn-gold {
+	@apply ubr-btn bg-gold text-ink hover:bg-[#ffc23d];
+}
+
+@utility ubr-btn-ghost {
+	@apply ubr-btn bg-white border border-line text-ink hover:border-ink/30;
+}
+
+@utility ubr-btn-sm {
+	@apply h-8 px-3 text-[13px] rounded-[8px];
+}
+
+@utility ubr-btn-danger {
+	@apply ubr-btn bg-white border border-line text-danger hover:bg-danger-soft hover:border-danger/30;
+}
+
+@utility ubr-badge {
+	@apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold leading-5 whitespace-nowrap;
+}
+
+@utility ubr-badge-confirmed {
+	@apply ubr-badge bg-money-soft text-money;
+}
+
+@utility ubr-badge-uncertain {
+	@apply ubr-badge bg-gold-soft text-gold-deep;
+}
+
+@utility ubr-badge-declared {
+	@apply ubr-badge bg-white text-ink-soft ring-1 ring-inset ring-line;
+}
+
+@utility ubr-badge-unavailable {
+	@apply ubr-badge bg-canvas text-ink-muted;
+}
+
+@utility ubr-badge-danger {
+	@apply ubr-badge bg-danger-soft text-danger;
+}
+
+@utility ubr-table {
+	@apply w-full text-left text-[13px];
+
+	& th {
+	@apply px-4 py-2.5 text-[11px] font-bold uppercase tracking-wider text-ink-muted bg-canvas/60 border-b border-line whitespace-nowrap;
+	}
+
+	& td {
+	@apply px-4 py-3 border-b border-line/70 align-top;
+	}
+
+	& tbody tr {
+	@apply transition-colors hover:bg-gold-soft/30;
+	}
+}
+
+@utility ubr-nav-link {
+	@apply flex items-center gap-3 rounded-[10px] px-3 h-10 text-[14px] font-semibold text-white/65 transition hover:text-white hover:bg-white/5;
+
+	&[aria-current='page'] {
+	@apply text-ink bg-gold hover:bg-gold;
+	}
+}
+
+@utility ubr-skeleton {
+	@apply rounded-md bg-line/70 animate-pulse;
+}
+
+@utility ubr-stat {
+	@apply ubr-card p-5;
+}
+
+/* Rejestruje logo w manifeście Vite (Vite::asset w AppPages). */
+.ubr-brand-assets {
+	--ubr-logo: url('../images/ubr-logo.png');
+	--ubr-icon: url('../images/ubr-icon.png');
+}

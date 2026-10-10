@@ -20,6 +20,11 @@ class App extends Composer
 	 */
 	public function with(): array
 	{
+		// Panel Ugly but Rich (/app) nie korzysta z danych motywu strony (ACF).
+		if (str_starts_with($this->view->name(), 'ubr.')) {
+			return [];
+		}
+
 		return [
 			'siteName' => $this->siteName(),
 			'logo' => get_field('logo', 'option'),

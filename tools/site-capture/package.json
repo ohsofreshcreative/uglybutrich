@@ -1,0 +1,11 @@
+{
+  "name": "ubr-site-capture",
+  "private": true,
+  "description": "Ugly but Rich — pomocniczy komponent Website Analyzera: render strony w Chromium (Playwright), screenshoty Desktop/Mobile, metryki, axe-core. Uruchamiany przez PHP (proc_open), bez serwera.",
+  "type": "module",
+  "engines": { "node": ">=18.0.0" },
+  "dependencies": {
+    "axe-core": "4.14.0",
+    "playwright-core": "1.64.0"
+  }
+}

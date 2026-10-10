@@ -5,6 +5,12 @@
 @source "../../app/**/*.php";
 @source "../js/**/*.{js,ts,jsx,tsx}";
 
+/* Panel Ugly but Rich ma własny entry (ubr.css) — nie skanuj go w stylach strony. */
+@source not "../views/ubr";
+@source not "../js/ubr.js";
+@source not "../js/ubr";
+@source not "../../app/Ubr";
+
 /* Twoje “źródłowe” zmienne RGB */
 :root {
   /* base */

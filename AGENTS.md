@@ -13,6 +13,152 @@ Gdy zadanie zaczyna się od linku do frame'a w Figmie, obowiązuje skill `figma-
 
 ⸻
 
+Ugly but Rich — aplikacja SaaS w motywie (CZYTAJ NAJPIERW)
+
+Ten motyw zawiera aplikację **Ugly but Rich** (wewnętrzne narzędzie prospectingowe OhSoFresh, budowane jako SaaS).
+Poniższe zasady dotyczą wszystkiego w `app/Ubr`, `routes/`, `resources/views/ubr`, `resources/js/ubr*`, `resources/css/ubr.css`, `tests/`.
+Reszta tego pliku (bloki ACF, h2otwock) dotyczy strony publicznej i jest dziedzictwem motywu bazowego.
+
+Szczegóły: `docs/ARCHITECTURE.md` (architektura, model danych, Discovery) i `docs/PROGRESS.md` (stan prac, ograniczenia).
+
+**Stack:** WordPress 6.6+ · Sage 11 · Acorn 5 (Laravel 12 components) · PHP ≥ 8.2 · MySQL/MariaDB (InnoDB) · Tailwind CSS 4 · Alpine.js · Vite.
+**Bez osobnego pluginu i bez osobnego frameworka.** Moduł rejestruje `App\Ubr\Providers\UbrServiceProvider` (w `functions.php`).
+
+| Warstwa | Gdzie | Zasada |
+|---|---|---|
+| Domain | `app/Ubr/Domain` | czysta logika (role, normalizacja, kryteria) — bez SQL i bez Blade |
+| Infrastructure | `app/Ubr/Infrastructure` | `$wpdb` (przez `Db`), migracje, repozytoria, dostawcy danych, HTTP, kolejka |
+| Services | `app/Ubr/Services` | przypadki użycia (Discovery, prospekty, organizacje, tenancy) |
+| Http | `app/Ubr/Http` | kontrolery REST (`ubr/v1`), rejestracja tras, ekrany `/app` |
+| Routes | `routes/api.php`, `routes/app.php` | mapa tras REST + ekranów |
+| Views/JS | `resources/views/ubr`, `resources/js/ubr.js` | UI; dane tylko z REST API |
+
+Reguły bezpieczeństwa (obowiązkowe):
+
+- Organizację bierz WYŁĄCZNIE z `TenantResolver` (członkostwo w bazie). Nigdy z parametru żądania.
+- Każde zapytanie do danych organizacji (`searches`, `results`, `prospects`, przyszłe notatki) filtruj po `organization_id`.
+- Nowa trasa REST = wpis w `routes/api.php` z uprawnieniem z `Role::ABILITIES`. Nie używaj `is_admin()` do autoryzacji.
+- SQL tylko przez `Db` (`$wpdb->prepare`); sortowanie/kolumny tylko z whitelisty.
+- Firmy z globalnej bazy są widoczne dla organizacji tylko, gdy wystąpiły w jej wynikach lub prospektach.
+- Żadnych sekretów w repo — klucze API w `wp-config.php` (`UBR_APOLLO_API_KEY`, opcjonalnie `UBR_CEIDG_API_TOKEN`, `UBR_GUS_API_KEY`).
+- Discovery: tylko dane faktycznie obecne w źródle. Nie zgaduj domen, wielkości ani przychodów. Żadnych mocków w produkcji.
+- Długie operacje tylko w zadaniach w tle (`DiscoveryRunner::tick` przez `AsyncWorker`), nigdy w żądaniu przeglądarki.
+  LocalWP ma tylko 2 procesy PHP-FPM — nie usypiaj workerów na długo i trzymaj timeouty HTTP ≤ 60 s.
+- Apollo (główne źródło, płatne): każde płatne zapytanie przez `ApolloBudget::assertCanRequest()` i log w `ubr_api_requests`.
+  Nie ponawiaj automatycznie zapytań, które mogły zostać naliczone (timeout, 5xx) — tylko 429. Nie pobieraj kontaktów,
+  nie uruchamiaj enrichmentu bez osobnej zgody. Klucz `UBR_APOLLO_API_KEY` tylko w wp-config.php / env, nigdy w odpowiedziach.
+
+- Nie przypisuj firmie danych z FILTRA wyszukiwania (województwo, miasto, przedział zatrudnienia). Pole firmy = tylko to, co jest
+  w rekordzie źródła (`Confidence::DECLARED`) albo w rejestrze (`CONFIRMED`). Filtr dostawcy to stan „filtered” w `RelevanceScorer`.
+- Weryfikacja (etap 1.2): `VERIFIED` tylko z rekordu rejestru publicznego (KRS / biała lista VAT / CEIDG / GUS) dopasowanego nazwą
+  (`NameMatcher` ≥ 0,85) lub stroną WWW — nigdy z samych danych Apollo. Rejestry odpytujemy WYŁĄCZNIE po identyfikatorze (NIP/KRS/REGON
+  ze strony firmy lub rekordu źródła) — nigdy „pierwszy wynik po nazwie”. Identyfikator z niepasującego rekordu = rozbieżność, nie przypisanie.
+- Weryfikacja działa w osobnej kolejce (`ubr_verification_queue`, `VerificationRunner`), nie w Discovery i nie przy otwieraniu profilu.
+  Biała lista VAT: limit MF 100 zapytań/dzień — aplikacja zużywa maks. 80 (`UBR_VAT_DAILY_LIMIT`), cache 7 dni.
+  Nie zapisuj numerów rachunków ani danych osób (właściciele, reprezentanci, adres zamieszkania JDG).
+- Relevance Score (`RelevanceScorer`) = zgodność z kryteriami wyszukiwania. Opportunity Score = szansa sprzedaży redesignu. Nie łączyć.
+- Website Analyzer (Prompt 2): adres strony WYŁĄCZNIE z rekordu firmy (nigdy URL od użytkownika). Każde pobranie przez `UrlGuard`
+  (SSRF: tylko http/https, porty 80/443, DNS → wyłącznie publiczne IP, każdy krok przekierowania); w przeglądarce to samo w `capture.mjs`.
+  Nie wyłączaj sandboxa Chromium, nie obchodź CAPTCHA/logowania/X-Frame-Options. Render: `tools/site-capture` (Node + playwright-core
+  + axe-core, uruchamiany przez `SiteCapture` z proc_open i twardym timeoutem). Bez renderu analiza = PARTIAL, nie COMPLETED.
+- Opportunity Score: kryterium bez pomiaru = NOT_EVALUATED i 0 pkt; NIE przeskalowuj wyniku; coverage < 50% albo strona niedostępna
+  = INSUFFICIENT_DATA. Ocen wizualnych (design, typografia, hierarchia) nie ma bez AI Vision — heurystyki HTML to „sygnały strukturalne”.
+- AI Vision (`VisionService`) jest przygotowane i WYŁĄCZONE (płatne API) — włączenie tylko za zgodą właściciela (`UBR_AI_VISION_*`).
+  Odpowiedź modelu zawsze przez `VisionSchema::validate()`. Nie dodawaj fikcyjnych wyników AI ani Lighthouse.
+- Screenshoty: prywatny katalog poza webrootem (`ScreenshotStorage`), serwowane tylko przez `admin-ajax.php?action=ubr_screenshot`
+  z kontrolą widoczności firmy. Analizy są wspólne (publiczna strona), kto zlecił — prywatne (`by_my_organization`).
+- Decision Maker Finder (Prompt 3, `app/Ubr/Domain/Contacts`, `DecisionMakerFinderService`): NIE wymyślaj osób, NIE zgaduj e-maili
+  (żadnych wariantów imie.nazwisko@), nie przypisuj stanowisk bez dowodu. Osoba = imię i nazwisko + stanowisko z oficjalnego źródła.
+  API KRS anonimizuje osoby (maski „M****”) — KRS tylko POTWIERDZA osoby ze strony firmy (inicjały + długości + funkcja), nie tworzy ich;
+  „członek zarządu” zostaje członkiem zarządu. Crawler tylko linki opublikowane na stronie, robots.txt, limity (`ContactLimits`), SSRF
+  przez `PageFetcher`. Domena MISMATCH → osoby ze strony nie są przypisywane. Bez LinkedIn/scrapingu platform. Apollo People Search
+  przygotowane i wyłączone (`UBR_APOLLO_PEOPLE_ENABLED` — tylko za zgodą właściciela), bez płatnego enrichmentu.
+  Kontakty automatyczne globalne (`org_key = 0`), decyzje/notatki/kontakty ręczne prywatne (`ubr_contact_reviews`, `org_key = org`);
+  prywatna decyzja nie zmienia danych globalnych. Contact Priority Score ≠ Opportunity Score ≠ Confidence; nieznana wielkość = 0 pkt
+  i PROVISIONAL. Nie uruchamiaj researchu automatycznie dla wszystkich firm. Nowa logika = podbij `RESEARCH_VERSION` / `ContactPriorityCalculator::VERSION`.
+- Sales Pipeline (Prompt 4, `PipelineCatalog`, `PipelineService`, `PipelineRepository`): status, priorytet, właściciel, kwalifikacja,
+  notatki, aktywności i follow-upy są PRYWATNE dla organizacji (`ubr_organization_prospects` + `ubr_prospect_*`) — nigdy nie zmieniaj
+  nimi globalnej firmy. Każda zmiana = zdarzenie w `ubr_prospect_events`. Właściciel / osoba przypisana tylko spośród członków tej
+  organizacji. Prospektów NIE usuwamy — archiwizacja (`archived_at`), historia zostaje. Notatki: czysty tekst (strip tags), w UI tylko
+  `x-text`, usuwanie = soft delete (autor albo `pipeline.moderate`). Priorytet sprzedażowy ≠ scoringi. Kwalifikacja = sugestia
+  (`suggestQualification`) + decyzja ręczna; niski Opportunity nie blokuje. Aktywności tylko rejestrowane ręcznie (bez wysyłki).
+  Statusy pobieraj przez `PipelineCatalog::statuses($orgId)` (filtr `ubr/pipeline/statuses` — przyszłe statusy per organizacja).
+- ClickUp (Prompt 4, `app/Ubr/Infrastructure/ClickUp`, `ClickUp*Service`, `ClickUpRunner`): OAuth per użytkownik i organizacja
+  (`ubr_clickup_connections`, UNIQUE org+user). Token TYLKO zaszyfrowany (`SecretBox`, libsodium; klucz `UBR_ENCRYPTION_KEY` poza bazą),
+  nigdy w odpowiedziach, HTML, JS, URL ani logach (`Redactor`). `state` = 32 losowe bajty w transiencie (10 min, jednorazowy, przypisany
+  do user_id + organization_id); callback wymaga TEGO SAMEGO zalogowanego użytkownika. Nie implementuj fikcyjnego OAuth, nie wpisuj
+  credentials ani ID na sztywno, nie twórz Custom Fields w ClickUp. Eksport WYŁĄCZNIE przez kolejkę (`ubr_clickup_jobs`), nigdy w
+  żądaniu użytkownika. Deduplikacja: rekord w `ubr_clickup_exports` UNIQUE (organizacja, firma, lista, wariant) — nigdy po nazwie.
+  Timeout / 5xx po POST tworzącym zadanie = `UNKNOWN`, bez automatycznego ponowienia — tylko rekoncyliacja przez użytkownika.
+  „Update existing task” zmienia tylko blok między znacznikami `ClickUpTaskBuilder::START/END` (i to tylko gdy hash się zgadza)
+  oraz zmapowane pola — nigdy statusu, komentarzy, checklist, załączników. Do ClickUp nie trafiają: prywatne notatki, kontakty
+  odrzucone / wykluczone / nieaktualne, screenshoty; niezweryfikowane osoby są tak oznaczone. Reguły automatyczne: DOMYŚLNIE
+  WYŁĄCZONE, wykonywane połączeniem autora, tylko nowe zdarzenia (`ubr/company/changed`), backfill tylko po osobnym potwierdzeniu,
+  limity dzienne, bez uruchamiania analiz. Testy ClickUp = mocki; nie twórz prawdziwych zadań bez wyraźnej zgody właściciela.
+- UWAGA BEZPIECZEŃSTWO: w repozytorium jest śledzony plik prywatnego klucza SSH `key` (+ `key.pub`, commit `9b24093`) — nie czytać,
+  nie używać, nie kopiować, nie dodawać do paczek wdrożeniowych. Plan rotacji i usunięcia z historii: `docs/SECURITY-KEY.md`
+  (przepisanie historii Git tylko za zgodą właściciela). Nowe sekrety (ClickUp, klucz szyfrowania) wyłącznie w `wp-config.php`.
+
+HOW TO CONNECT CLICKUP
+
+Integracja jest wdrożona, ale działa dopiero po skonfigurowaniu aplikacji OAuth w ClickUp (do tego czasu Settings pokazuje
+„Not Configured” z instrukcją). Nic nie jest eksportowane automatycznie.
+
+1. ClickUp (konto z uprawnieniami administratora Workspace): **Settings → Apps → Create new app** (sekcja „ClickUp API” / OAuth).
+2. Nazwa: np. „Ugly but Rich”. **Redirect URL** = dokładnie adres pokazany w Settings → Integrations → ClickUp, domyślnie
+   `{home_url}/app/clickup-callback/` (LocalWP: `http://uglybutirch.local/app/clickup-callback/`). ClickUp wg dokumentacji przyjmuje
+   adresy bez SSL, ale zastrzega, że „mogą nie być wspierane w przyszłości”; w produkcji wymagany HTTPS (w środowisku `production`
+   aplikacja blokuje adres HTTP).
+3. Skopiuj **Client ID** i **Client Secret** do `wp-config.php` (NIE do repozytorium, NIE do dokumentacji):
+   ```php
+   define('UBR_CLICKUP_CLIENT_ID', '…');
+   define('UBR_CLICKUP_CLIENT_SECRET', '…');
+   define('UBR_ENCRYPTION_KEY', '…');          // zalecane: wygeneruj `wp ubr secrets key`; bez niego klucz z AUTH_KEY/SECURE_AUTH_KEY
+   // opcjonalnie: define('UBR_CLICKUP_REDIRECT_URI', 'https://…/app/clickup-callback/'); define('UBR_CLICKUP_DAILY_NEW_TASKS', 100);
+   ```
+   Zmiana `UBR_ENCRYPTION_KEY` unieważnia zapisane tokeny (użytkownicy łączą konto ponownie — status „Reconnect Required”).
+4. W aplikacji: **Settings → Integrations → ClickUp → Connect ClickUp** → autoryzacja w ClickUp (wybór Workspace) → powrót do Settings
+   ze stanem „Connected”. Każdy członek organizacji łączy SWOJE konto.
+5. **Test Connection** (GET /user — nic nie tworzy) → **Select destination** (Workspace → Space → Folder opcjonalnie → List) →
+   opcjonalnie Default Task Name i mapowanie istniejących Custom Fields.
+6. Pierwszy realny eksport wykonaj świadomie na jednej firmie (karta firmy → Sprzedaż → „Eksportuj do ClickUp”) — po potwierdzeniu
+   właściciela. Reguły automatyczne włączaj dopiero po Dry Run.
+7. Rozłączenie: „Disconnect” usuwa token z Ugly but Rich i wyłącza reguły tego połączenia. ClickUp nie udostępnia w API unieważniania
+   tokenu — dostęp aplikacji można dodatkowo odebrać w ustawieniach ClickUp.
+
+Baza danych: tabele `{prefix}ubr_*`, migracje w `app/Ubr/Infrastructure/Database/Migrations` (wersja w opcji `ubr_db_version`).
+Nową zmianę schematu dodawaj jako NOWĄ migrację (M007…; wdrożone: M001–M006), idempotentną, bez kasowania danych. Nie zmieniaj wdrożonych migracji.
+
+Komendy aplikacji (WP-CLI, z socketem Local — patrz niżej „Komendy”):
+
+```bash
+wp ubr install                     # migracje + organizacja OhSoFresh (idempotentnie)
+wp ubr status                      # schemat, tabele, kolejka, źródła danych
+wp ubr test                        # testy automatyczne (sprzątają po sobie)
+wp ubr discover --org=ohsofresh --industry=steel_structures --region=mazowieckie --providers=wikidata,osm --limit=25 --sync
+wp ubr search <id> --results       # stan zadania, dziennik i wyniki
+wp ubr queue-work [--loop]         # przetwórz zaległe zadania (systemowy cron / awaryjnie)
+wp ubr doctor --providers          # diagnostyka: kolejka, loopback, zadania, łączność ze źródłami (bez kredytów)
+wp ubr org list | create "Nazwa" --owner=<user> | add-member <slug> <user> --role=admin
+wp ubr verify <id>... | --search=<id> | --all [--work] [--limit=50]   # weryfikacja w rejestrach (bezpłatne, bez Apollo)
+wp ubr relevance [--company=<id>]  # przeliczenie Relevance Score (bez zapytań zewnętrznych)
+wp ubr analyze --check             # Website Analyzer: diagnostyka Node/Playwright/Chrome
+wp ubr analyze <id>... [--work]    # analiza stron (bez płatnych API, bez Apollo)
+wp ubr contacts research <id>... [--work]   # Decision Maker Finder (KRS + strona firmy, bez płatnych API)
+wp ubr secrets status              # źródło klucza szyfrowania tokenów (bez wyświetlania klucza)
+wp ubr secrets key                 # wygeneruj wartość UBR_ENCRYPTION_KEY do wp-config.php (tylko terminal)
+wp ubr contacts show <id>          # kontakty firmy z rankingiem
+wp ubr contacts suppress <id> "Imię Nazwisko" --reason=…   # wykluczenie osoby z researchu (sprzeciw / usunięcie danych)
+wp ubr contacts purge [--days=365] # retencja: usuń nieaktywne kontakty automatyczne
+cd tools/site-capture && npm install   # zależności komponentu przeglądarki (playwright-core, axe-core; bez pobierania przeglądarki)
+```
+
+Panel: `/app` (Dashboard), `/app/discover`, `/app/prospects`, `/app/settings` — wymaga logowania i członkostwa. Karta firmy: zakładki Firma / Decision Makers / Website Analysis.
+Assety panelu: osobne entry Vite `resources/css/ubr.css` + `resources/js/ubr.js` (nie ładują `app.css` strony).
+Kod PHP aplikacji pisany tabami, komentarze po polsku, nazwy klas/metod po angielsku.
+
+⸻
+
 Project overview
 
 This repository contains a custom WordPress project built with Roots Sage 11.

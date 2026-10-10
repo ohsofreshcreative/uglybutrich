@@ -6,12 +6,12 @@ import path from 'path'
 
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const wpOrigin = env.WP_HOME || 'http://h2otwock.local'
+  const wpOrigin = env.WP_HOME || 'http://uglybutrich.local'
 
   return {
     server: {
-      host: 'h2otwock.local',
-      port: 6011,
+      host: 'uglybutrich.local',
+      port: 6016,
       strictPort: true,
       cors: true,
       proxy: {
@@ -22,13 +22,13 @@ export default defineConfig(({ command, mode }) => {
       },
       hmr: {
         protocol: 'ws',
-        host: 'h2otwock.local',
-        port: 6011,
+        host: 'uglybutrich.local',
+        port: 6016,
       },
     },
 
     base: command === 'build'
-      ? '/wp-content/themes/h2otwock/public/build/'
+      ? '/wp-content/themes/uglybutrich/public/build/'
       : '/build/',
 
     plugins: [
@@ -42,6 +42,8 @@ export default defineConfig(({ command, mode }) => {
           'resources/js/app.js',
           'resources/css/editor.css',
           'resources/js/editor.js',
+          'resources/css/ubr.css',
+          'resources/js/ubr.js',
         ],
         refresh: true,
       }),

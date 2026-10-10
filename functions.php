@@ -34,6 +34,7 @@ require $composer;
 Application::configure()
 	->withProviders([
 		App\Providers\ThemeServiceProvider::class,
+		App\Ubr\Providers\UbrServiceProvider::class,
 	])
 	->boot();
 

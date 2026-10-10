@@ -39,3 +39,12 @@ deploy/
 # === Git ===
 .gitkeep
 vendor/
+
+# === Sekrety (nigdy w repozytorium) ===
+key
+key.pub
+*.pem
+id_rsa*
+id_ed25519*
+wp-config.php
+.ubr-deploy*.tgz
