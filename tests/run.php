@@ -1485,6 +1485,18 @@ try {
 	/* SALES PIPELINE + CLICKUP (Prompt 4) — ClickUp wyłącznie na mockach HTTP. */
 	require __DIR__ . '/pipeline-clickup.php';
 
+	/* LEAD INTELLIGENCE (Prompt 5) — tylko zapisane dane, bez zapytań zewnętrznych. */
+	require __DIR__ . '/lead-intelligence.php';
+
+	/* DISCOVER UI + PODGLĄD STRONY (Prompt 5.1) — kontrakt danych UI, brak efektów ubocznych, reguły iframe. */
+	require __DIR__ . '/discover-ui.php';
+
+	/* PROSPECTING DASHBOARD & ACTION CENTER (Prompt 6) — osobna organizacja testowa, dane kontrolowane. */
+	require __DIR__ . '/action-center.php';
+
+	/* AUDYT QA (Prompt 7) — regresje wykrytych błędów (po Action Center: korzysta z organizacji testowej C). */
+	require __DIR__ . '/qa-p7.php';
+
 	/* ------------------------------------------------------------------ */
 	UbrT::group('Kolejka — wykrywanie zablokowanych zadań');
 
@@ -1504,6 +1516,7 @@ try {
 } finally {
 	/* Sprzątanie danych testowych. */
 	foreach ($created['orgs'] as $orgId) {
+		delete_option('ubr_ac_ov_' . $orgId); // wersja cache Action Center organizacji testowej
 		$wpdb->delete($db->table(Tables::CLICKUP_JOBS), ['organization_id' => $orgId]); // kolejka ClickUp nie ma klucza obcego (historia)
 		$wpdb->delete($db->table(Tables::ORGANIZATIONS), ['id' => $orgId]); // kaskada: członkowie, wyszukiwania, wyniki, prospekty
 	}
@@ -1535,7 +1548,7 @@ try {
 	}
 
 	foreach ((array) _get_cron_array() as $ts => $hooks) {
-		foreach (['ubr_discovery_tick', 'ubr_verification_tick', 'ubr_analysis_tick', 'ubr_contacts_tick', 'ubr_clickup_tick'] as $hook) {
+		foreach (['ubr_discovery_tick', 'ubr_verification_tick', 'ubr_analysis_tick', 'ubr_contacts_tick', 'ubr_clickup_tick', 'ubr_lead_tick'] as $hook) {
 			foreach ((array) ($hooks[$hook] ?? []) as $event) {
 				wp_unschedule_event($ts, $hook, $event['args']);
 			}
@@ -1544,6 +1557,11 @@ try {
 
 	delete_option('ubr_verify_lock');
 	delete_option('ubr_clickup_lock');
+	delete_option('ubr_lead_lock');
+
+	foreach ($wpdb->get_col("SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_ubr\\_ac\\_%'") as $opt) {
+		delete_transient(substr($opt, strlen('_transient_'))); // liczniki Action Center (cache 60 s)
+	}
 
 	foreach ($wpdb->get_col("SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_ubr\\_cu\\_%' OR option_name LIKE '\\_transient\\_ubr\\_pipeline\\_stats\\_%'") as $opt) {
 		delete_transient(substr($opt, strlen('_transient_')));

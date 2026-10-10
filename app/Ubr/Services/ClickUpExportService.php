@@ -8,6 +8,7 @@ use App\Ubr\Infrastructure\Repositories\ClickUpRepository;
 use App\Ubr\Infrastructure\Repositories\CompanyRepository;
 use App\Ubr\Infrastructure\Repositories\PipelineRepository;
 use App\Ubr\Support\UbrException;
+use App\Ubr\Infrastructure\Http\UrlGuard;
 
 /**
  * Eksport firm do ClickUp — zlecenia (wykonanie zawsze w tle przez ClickUpRunner).
@@ -238,7 +239,7 @@ class ClickUpExportService
 				throw UbrException::invalid('To zadanie jest na innej liście niż eksport.');
 			}
 
-			$this->repo->updateExport($exportId, ['export_status' => 'success', 'task_id' => $taskId, 'task_url' => mb_substr((string) ($res['data']['url'] ?? 'https://app.clickup.com/t/' . $taskId), 0, 255), 'exported_at' => Db::now(), 'last_error' => null]);
+			$this->repo->updateExport($exportId, ['export_status' => 'success', 'task_id' => $taskId, 'task_url' => mb_substr(UrlGuard::httpUrl($res['data']['url'] ?? null) ?? 'https://app.clickup.com/t/' . rawurlencode($taskId), 0, 255), 'exported_at' => Db::now(), 'last_error' => null]);
 		} else {
 			throw UbrException::invalid('Nieznana akcja.');
 		}
@@ -315,7 +316,7 @@ class ClickUpExportService
 			'list_id' => $e['list_id'],
 			'list_name' => $e['list_name'],
 			'variant' => (int) $e['variant'],
-			'task_url' => $e['task_url'],
+			'task_url' => UrlGuard::httpUrl($e['task_url'] ?? null),
 			'exported_at' => $e['exported_at'] ? gmdate('c', strtotime($e['exported_at'] . ' UTC')) : null,
 			'last_synced_at' => $e['last_synced_at'] ? gmdate('c', strtotime($e['last_synced_at'] . ' UTC')) : null,
 			'error' => $e['last_error'],

@@ -135,6 +135,11 @@ class DiscoveryService
 
 		$data = $this->results->paginate($id, $ctx->organizationId, max(1, $page), max(1, min(100, $perPage)), $filter, $sort, $extra);
 
+		// Firmy bez aktualnej oceny Lead Intelligence → przeliczenie w tle (bez liczenia w tym żądaniu).
+		if (array_filter($data['items'], fn ($r) => ($r['li_status'] ?? null) === null || ! empty($r['li_stale']))) {
+			app(LeadIntelligenceRunner::class)->kick();
+		}
+
 		return [
 			'items' => app(ContactResearchService::class)->applyOrganizationView($ctx, array_map(fn ($r) => CompanyPresenter::row($r), $data['items'])),
 			'total' => $data['total'],

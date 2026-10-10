@@ -8,6 +8,9 @@ use App\Ubr\Infrastructure\Database\Migrations\M003CompanyVerification;
 use App\Ubr\Infrastructure\Database\Migrations\M004WebsiteAnalysis;
 use App\Ubr\Infrastructure\Database\Migrations\M005DecisionMakers;
 use App\Ubr\Infrastructure\Database\Migrations\M006SalesPipelineClickUp;
+use App\Ubr\Infrastructure\Database\Migrations\M007LeadIntelligence;
+use App\Ubr\Infrastructure\Database\Migrations\M008ActionCenter;
+use App\Ubr\Infrastructure\Database\Migrations\M009ManualWebsiteReview;
 use App\Ubr\Infrastructure\Database\Migrations\Migration;
 use Throwable;
 
@@ -20,6 +23,9 @@ class Migrator
 	public const OPTION = 'ubr_db_version';
 
 	private const LOCK = 'ubr_migration_lock';
+
+	/** Ostatni błąd migracji: {at, version, message} — wstrzymuje ponawianie przy żądaniach WWW. */
+	public const ERROR_OPTION = 'ubr_migration_error';
 
 	public function __construct(private Db $db)
 	{
@@ -37,6 +43,9 @@ class Migrator
 			new M004WebsiteAnalysis(),
 			new M005DecisionMakers(),
 			new M006SalesPipelineClickUp(),
+			new M007LeadIntelligence(),
+			new M008ActionCenter(),
+			new M009ManualWebsiteReview(),
 		];
 	}
 
@@ -65,23 +74,33 @@ class Migrator
 		}
 
 		$applied = [];
+		$version = null;
 
 		try {
+			// Wersja czytana z bazy PO uzyskaniu blokady (nie z cache opcji tego żądania) — inny proces mógł
+			// właśnie skończyć migrację; bez tego ostatnia migracja wykonywałaby się drugi raz.
+			wp_cache_delete('alloptions', 'options');
+			wp_cache_delete(self::OPTION, 'options');
+
 			foreach ($this->migrations() as $migration) {
 				if ($migration->version() <= $this->currentVersion()) {
 					continue;
 				}
 
+				$version = $migration->version();
 				$migration->up($this->db);
 				update_option(self::OPTION, $migration->version(), true);
 				$applied[] = $migration->version();
 			}
+
+			delete_option(self::ERROR_OPTION);
 		} catch (Throwable $e) {
 			error_log('[ubr] Migration failed: ' . $e->getMessage());
+			update_option(self::ERROR_OPTION, ['at' => time(), 'version' => $version, 'message' => mb_substr($e->getMessage(), 0, 500)], false);
 
 			throw $e;
 		} finally {
-			delete_option(self::LOCK);
+			$this->releaseLock();
 		}
 
 		if ($applied !== []) {
@@ -106,19 +125,39 @@ class Migrator
 		return $status;
 	}
 
+	/**
+	 * @return array{at: int, version: ?int, message: string}|null
+	 */
+	public function lastError(): ?array
+	{
+		$e = get_option(self::ERROR_OPTION, null);
+
+		return is_array($e) && isset($e['at']) ? ['at' => (int) $e['at'], 'version' => isset($e['version']) ? (int) $e['version'] : null, 'message' => (string) ($e['message'] ?? '')] : null;
+	}
+
+	/**
+	 * Blokada na poziomie MySQL (GET_LOCK) — atomowa i zwalniana automatycznie, gdy proces zginie (koniec połączenia).
+	 * Blokada w opcji (add_option = upsert) pozwalała dwóm równoległym żądaniom „zdobyć” ją jednocześnie.
+	 */
 	private function acquireLock(): bool
 	{
-		if (add_option(self::LOCK, time(), '', false)) {
-			return true;
-		}
+		global $wpdb;
 
-		// Przeterminowana blokada (np. po fatal error) — przejmij.
-		if (time() - (int) get_option(self::LOCK, 0) > 300) {
-			update_option(self::LOCK, time(), false);
+		return (int) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', $this->lockName())) === 1;
+	}
 
-			return true;
-		}
+	private function releaseLock(): void
+	{
+		global $wpdb;
 
-		return false;
+		$wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $this->lockName()));
+		delete_option(self::LOCK); // pozostałość po starszej wersji blokady
+	}
+
+	private function lockName(): string
+	{
+		global $wpdb;
+
+		return substr(DB_NAME . '.' . $wpdb->prefix . self::LOCK, 0, 64);
 	}
 }

@@ -36,6 +36,18 @@ final class Tables
 	public const CLICKUP_JOBS = 'ubr_clickup_jobs';
 	public const CLICKUP_RULES = 'ubr_clickup_rules';
 
+	public const LEAD_INTELLIGENCE = 'ubr_lead_intelligence';
+
+	public const LEAD_INSIGHTS = 'ubr_lead_insights';
+
+	public const LEAD_HISTORY = 'ubr_lead_intelligence_history';
+
+	public const ACTION_SNOOZES = 'ubr_action_snoozes';
+
+	public const MANUAL_REVIEWS = 'ubr_manual_reviews';
+
+	public const MANUAL_REVIEW_HISTORY = 'ubr_manual_review_history';
+
 	public static function name(string $table): string
 	{
 		global $wpdb;
@@ -77,6 +89,12 @@ final class Tables
 			self::CLICKUP_EXPORTS,
 			self::CLICKUP_JOBS,
 			self::CLICKUP_RULES,
+			self::LEAD_INTELLIGENCE,
+			self::LEAD_INSIGHTS,
+			self::LEAD_HISTORY,
+			self::ACTION_SNOOZES,
+			self::MANUAL_REVIEWS,
+			self::MANUAL_REVIEW_HISTORY,
 		];
 	}
 }

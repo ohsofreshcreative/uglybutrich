@@ -78,8 +78,17 @@ class AsyncWorker
 		return $expires >= time() && hash_equals($this->signJob($job, $id, $expires), $token);
 	}
 
+	/** @var array<string, array{0: string, 1: int}> zlecenia odłożone do końca żądania (jedno na typ + ID) */
+	private static array $deferred = [];
+
+	private static bool $shutdownHooked = false;
+
 	/**
 	 * Zleca zadanie innego typu niż krok wyszukiwania (np. 'verify' — kolejka weryfikacji firm).
+	 *
+	 * Każde zlecenie to żądanie HTTP do samego siebie z limitem 0,5 s (worker nie odpowiada od razu, więc cURL czeka
+	 * do limitu). Przy żądaniach WWW zlecenia są deduplikowane i wysyłane PO wysłaniu odpowiedzi użytkownikowi
+	 * (fastcgi_finish_request / litespeed_finish_request) — zmiana statusu nie czeka już ~1 s na dwa zlecenia.
 	 */
 	public function dispatchJob(string $job, int $id): bool
 	{
@@ -87,6 +96,48 @@ class AsyncWorker
 			return false;
 		}
 
+		if ($this->canDefer()) {
+			self::$deferred[$job . ':' . $id] = [$job, $id];
+
+			if (! self::$shutdownHooked) {
+				self::$shutdownHooked = true;
+				register_shutdown_function(fn () => $this->flushDeferred());
+			}
+
+			return true;
+		}
+
+		return $this->sendJob($job, $id);
+	}
+
+	public function flushDeferred(): void
+	{
+		$jobs = self::$deferred;
+		self::$deferred = [];
+
+		if ($jobs === []) {
+			return;
+		}
+
+		if (function_exists('fastcgi_finish_request')) {
+			fastcgi_finish_request();
+		} elseif (function_exists('litespeed_finish_request')) {
+			litespeed_finish_request();
+		}
+
+		foreach ($jobs as [$job, $id]) {
+			$this->sendJob($job, $id);
+		}
+	}
+
+	private function canDefer(): bool
+	{
+		return ! (defined('WP_CLI') && WP_CLI)
+			&& (bool) apply_filters('ubr/queue/defer_dispatch', function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request'));
+	}
+
+	private function sendJob(string $job, int $id): bool
+	{
 		$expires = time() + 600;
 		$response = wp_remote_post(add_query_arg('action', self::JOB_ACTION, $this->url()), [
 			'timeout' => 0.5,

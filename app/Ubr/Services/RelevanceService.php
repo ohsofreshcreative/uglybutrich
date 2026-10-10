@@ -63,6 +63,10 @@ class RelevanceService
 
 		$this->storeFlags($companyId, $company, $flags);
 
+		if ($count > 0) {
+			do_action('ubr/company/changed', $companyId, 'relevance_changed', null);
+		}
+
 		return $count;
 	}
 

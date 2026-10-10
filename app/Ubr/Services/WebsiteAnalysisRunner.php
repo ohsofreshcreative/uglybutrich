@@ -2,6 +2,7 @@
 
 namespace App\Ubr\Services;
 
+use App\Ubr\Support\Lock;
 use App\Ubr\Infrastructure\Database\Db;
 use App\Ubr\Infrastructure\Queue\AsyncWorker;
 use App\Ubr\Infrastructure\Repositories\AnalysisRepository;
@@ -45,6 +46,12 @@ class WebsiteAnalysisRunner
 		$processed = 0;
 
 		try {
+			// Analizy przerwane twardo (proces zabity) po wyczerpaniu prób — 'failed' zamiast nieskończonego ponawiania.
+			foreach ($this->analyses->failExhausted(3) as $dead) {
+				$this->analyses->update((int) $dead['id'], ['finished_at' => Db::now(), 'errors' => [['stage' => 'internal', 'message' => 'Analiza przerwana — proces workera został zakończony (limit czasu lub pamięci serwera) po kilku próbach.']]]);
+				$this->analyzer->syncCompany((int) $dead['company_id']);
+			}
+
 			$item = $this->analyses->claim((int) ceil(AnalysisLimits::analysisTimeoutMs() / 1000) + 120);
 
 			if ($item) {
@@ -69,7 +76,7 @@ class WebsiteAnalysisRunner
 				}
 			}
 		} finally {
-			delete_option(self::LOCK_PREFIX . $slot);
+			Lock::release(self::LOCK_PREFIX . $slot);
 		}
 
 		$due = $this->analyses->countDue();
@@ -95,27 +102,14 @@ class WebsiteAnalysisRunner
 	}
 
 	/**
-	 * Slot równoległości (opcja z terminem wygaśnięcia) — maks. `concurrency` przeglądarek naraz.
+	 * Slot równoległości — maks. `concurrency` przeglądarek naraz. Blokada MySQL (GET_LOCK): atomowa i zwalniana
+	 * automatycznie po śmierci procesu (wcześniej: opcja z terminem — nieatomowe przejęcie, możliwe 2 Chromium naraz).
 	 */
 	private function acquireSlot(): ?int
 	{
-		$seconds = (int) ceil(AnalysisLimits::analysisTimeoutMs() / 1000) + 150;
-
 		for ($slot = 1; $slot <= AnalysisLimits::limits()['concurrency']; $slot++) {
-			$name = self::LOCK_PREFIX . $slot;
-
-			if (add_option($name, time() + $seconds, '', false)) {
+			if (Lock::acquire(self::LOCK_PREFIX . $slot)) {
 				return $slot;
-			}
-
-			wp_cache_delete($name, 'options');
-
-			if ((int) get_option($name, 0) < time()) {
-				delete_option($name);
-
-				if (add_option($name, time() + $seconds, '', false)) {
-					return $slot;
-				}
 			}
 		}
 

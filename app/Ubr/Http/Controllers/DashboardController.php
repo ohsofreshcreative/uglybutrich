@@ -29,6 +29,7 @@ class DashboardController
 			],
 			'pipeline' => $ctx->can('pipeline.view') ? app(\App\Ubr\Services\PipelineService::class)->stats($ctx) : null,
 			'agenda' => $ctx->can('pipeline.view') ? app(\App\Ubr\Services\PipelineService::class)->agenda($ctx) : null,
+			'top_leads' => $ctx->can('companies.view') ? app(\App\Ubr\Services\LeadIntelligenceService::class)->top($ctx, 5) : [],
 			'recent_searches' => $this->discovery->recent($ctx, 6),
 			'recent_companies' => array_map(fn ($r) => [
 				'id' => (int) $r['id'],

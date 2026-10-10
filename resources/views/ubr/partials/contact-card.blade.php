@@ -37,7 +37,7 @@
 		<dd class="flex flex-wrap gap-x-2 gap-y-0.5">
 			<template x-for="(s, i) in ct.sources" :key="i">
 				<span>
-					<a x-show="s.url" :href="s.url" target="_blank" rel="noopener nofollow" class="font-semibold hover:underline" x-text="s.label"></a>
+					<a x-show="s.url" :href="$store.ubr.safeHref(s.url)" target="_blank" rel="noopener nofollow" class="font-semibold hover:underline" x-text="s.label"></a>
 					<span x-show="!s.url" class="font-semibold" x-text="s.label"></span>
 				</span>
 			</template>
@@ -51,7 +51,7 @@
 		<template x-if="ct.phone"><dt class="text-ink-muted">Telefon</dt></template>
 		<template x-if="ct.phone"><dd><a :href="'tel:' + ct.phone" class="hover:underline" x-text="ct.phone"></a> <span class="text-[11px] text-ink-muted">(służbowy, z oficjalnej strony)</span></dd></template>
 		<template x-if="ct.profile_url"><dt class="text-ink-muted">Profil</dt></template>
-		<template x-if="ct.profile_url"><dd><a :href="ct.profile_url" target="_blank" rel="noopener nofollow" class="hover:underline">Profil zawodowy</a> <span class="text-[11px] text-ink-muted">(link opublikowany przez źródło)</span></dd></template>
+		<template x-if="ct.profile_url"><dd><a :href="$store.ubr.safeHref(ct.profile_url)" target="_blank" rel="noopener nofollow" class="hover:underline">Profil zawodowy</a> <span class="text-[11px] text-ink-muted">(link opublikowany przez źródło)</span></dd></template>
 		<dt class="text-ink-muted">Weryfikacja</dt>
 		<dd class="text-ink-muted" x-text="$store.ubr.date(ct.last_verified_at)"></dd>
 	</dl>
@@ -89,7 +89,7 @@
 						<div><span class="font-semibold" x-text="s.label"></span><span class="text-ink-muted" x-text="' · ' + (s.title || '') + ' · ' + $store.ubr.date(s.retrieved_at)"></span></div>
 						<div class="text-ink-muted" x-show="s.observed_role" x-text="'Stanowisko w źródle: ' + s.observed_role"></div>
 						<div class="italic text-ink-soft" x-show="s.excerpt" x-text="'„' + s.excerpt + '”'"></div>
-						<a x-show="s.url" :href="s.url" target="_blank" rel="noopener nofollow" class="text-[11px] hover:underline">Otwórz źródło</a>
+						<a x-show="s.url" :href="$store.ubr.safeHref(s.url)" target="_blank" rel="noopener nofollow" class="text-[11px] hover:underline">Otwórz źródło</a>
 					</div>
 				</template>
 			</div>

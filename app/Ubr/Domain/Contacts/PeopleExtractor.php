@@ -270,7 +270,8 @@ final class PeopleExtractor
 						'source_url' => $url, 'source_title' => mb_substr($pageTitle, 0, 255), 'page_kind' => $pageKind,
 						'excerpt' => mb_substr($name->full() . ' · ' . $role['text'] . ' (dane strukturalne strony)', 0, 300),
 						'email' => null, 'role_email' => null, 'phone' => null,
-						'profile' => is_string($node['sameAs'] ?? null) && str_contains((string) $node['sameAs'], 'linkedin.com/in/') ? (string) $node['sameAs'] : null,
+						// Tylko pełny adres profilu (jak dla linków w HTML) — „zawiera linkedin.com/in/” przepuszczało javascript:…
+						'profile' => is_string($node['sameAs'] ?? null) && preg_match('#^https?://([a-z]{2,3}\.)?linkedin\.com/in/[A-Za-z0-9\-_%]+/?$#i', (string) $node['sameAs']) ? rtrim((string) $node['sameAs'], '/') : null,
 						'former' => false,
 						'other_entity' => $works !== '' && ! $this->mentionsCompany(PersonName::fold($works), $companyName) ? $works : null,
 					];
@@ -433,6 +434,12 @@ final class PeopleExtractor
 	 */
 	public function emailBelongsTo(string $email, PersonName $name): bool
 	{
+		// Adres ogólny / działu (biuro@, sekretariat@, marketing@ …) nigdy nie jest adresem osobistym — nawet
+		// jeśli nazwa lokalna przypadkiem zawiera nazwisko („sekretariat” zawiera „kret”).
+		if (self::isGenericEmail($email)) {
+			return false;
+		}
+
 		$local = PersonName::fold(strstr($email, '@', true) ?: '');
 		$local = preg_replace('/[^a-z]/', '', $local) ?? '';
 		$first = preg_replace('/[^a-z]/', '', PersonName::fold($name->first)) ?? '';
@@ -442,10 +449,41 @@ final class PeopleExtractor
 			return false;
 		}
 
-		return str_contains($local, $last)
+		// Dopasowanie podciągu tylko dla nazwisk ≥ 3 liter (krótkie nazwiska trafiały przypadkowo w dowolny adres).
+		return (strlen($last) >= 3 && str_contains($local, $last))
+			|| $local === $last
 			|| ($first !== '' && str_starts_with($local, $first) && str_contains($local, substr($last, 0, 1)) && strlen($local) <= strlen($first) + 2)
 			|| $local === substr($first, 0, 1) . $last
 			|| $local === $first . substr($last, 0, 1);
+	}
+
+	/** Nazwy lokalne adresów ogólnych firmy i działów (porównanie po usunięciu polskich znaków). */
+	public const GENERIC_LOCALS = [
+		'biuro', 'info', 'informacja', 'kontakt', 'contact', 'office', 'sekretariat', 'recepcja', 'reception', 'hello', 'hi', 'mail', 'email',
+		'poczta', 'admin', 'administrator', 'webmaster', 'marketing', 'sales', 'sprzedaz', 'handlowy', 'handel', 'oferty', 'oferta', 'zamowienia',
+		'order', 'orders', 'export', 'eksport', 'import', 'serwis', 'service', 'support', 'pomoc', 'help', 'hr', 'kadry', 'rekrutacja', 'kariera',
+		'praca', 'jobs', 'career', 'careers', 'ksiegowosc', 'faktury', 'invoice', 'invoices', 'billing', 'zarzad', 'board', 'management',
+		'dyrekcja', 'press', 'prasa', 'pr', 'media', 'noreply', 'newsletter', 'rodo', 'iod', 'dpo', 'gdpr', 'logistyka', 'magazyn',
+		'zakupy', 'purchasing', 'it', 'team', 'firma', 'company', 'bok', 'obsluga', 'klient', 'klienci', 'centrala', 'reklamacje', 'technika',
+	];
+
+	/**
+	 * Adres ogólny lub działu (biuro@, info2@, sales-pl@, no-reply@ …) — kanał firmy, a nie adres konkretnej osoby.
+	 */
+	public static function isGenericEmail(string $email): bool
+	{
+		$local = PersonName::fold(strstr(strtolower($email), '@', true) ?: '');
+		$local = preg_replace('/\+.*$/', '', $local) ?? $local;
+		$letters = preg_replace('/[^a-z]/', '', $local) ?? '';
+
+		if (in_array($letters, self::GENERIC_LOCALS, true) || in_array(str_replace(['-', '_', '.'], '', $local), ['noreply', 'donotreply'], true)) {
+			return true;
+		}
+
+		// biuro2, info.pl, sales-export, dzial.handlowy, kontakt_firma
+		$alt = implode('|', array_map(fn ($w) => preg_quote($w, '/'), self::GENERIC_LOCALS));
+
+		return (bool) preg_match('/^(' . $alt . ')([\d._\-].*)?$/', $local) || (bool) preg_match('/^dzial[\d._\-]?/', $local);
 	}
 
 	private function sameDomain(string $email, string $companyDomain): bool

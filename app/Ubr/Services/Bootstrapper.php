@@ -28,8 +28,15 @@ class Bootstrapper
 	) {
 	}
 
+	/** Po błędzie migracji kolejna automatyczna próba przy żądaniu WWW najwcześniej po tym czasie. */
+	public const RETRY_AFTER_ERROR = 600;
+
 	/**
 	 * Wywoływane na `init` — tanie, gdy wszystko jest aktualne (2 odczyty opcji z autoload).
+	 *
+	 * Produkcja: zalecane `define('UBR_AUTO_MIGRATE', false);` w wp-config.php i migracje podczas wdrożenia
+	 * (`wp ubr migrate`) — wtedy żądania WWW nigdy nie wykonują DDL. W WP-CLI migracje uruchamiają wyłącznie
+	 * polecenia `wp ubr install` / `wp ubr migrate` (z raportem i kodem wyjścia), a nie każde wywołanie `wp`.
 	 */
 	public function maybeRun(): void
 	{
@@ -37,7 +44,27 @@ class Bootstrapper
 			return;
 		}
 
+		if (! self::autoMigrateEnabled()) {
+			return;
+		}
+
+		// Po błędzie nie ponawiamy DDL przy każdym żądaniu (koszt + zalew logów) — najwcześniej po 10 min.
+		$error = $this->migrator->lastError();
+
+		if ($error && time() - $error['at'] < self::RETRY_AFTER_ERROR) {
+			return;
+		}
+
 		$this->run();
+	}
+
+	public static function autoMigrateEnabled(): bool
+	{
+		if (defined('WP_CLI') && WP_CLI) {
+			return false;
+		}
+
+		return ! defined('UBR_AUTO_MIGRATE') || (bool) constant('UBR_AUTO_MIGRATE');
 	}
 
 	/**

@@ -110,7 +110,8 @@ final class CompanyNormalizer
 	{
 		$digits = preg_replace('/\D+/', '', preg_replace('/^\s*PL/i', '', (string) $value) ?? '') ?? '';
 
-		if (strlen($digits) !== 10) {
+		// 0000000000 (i inne powtórzenia jednej cyfry) to wypełniacze z szablonów stron — przechodzą sumę kontrolną.
+		if (strlen($digits) !== 10 || preg_match('/^(\d)\1{9}$/', $digits)) {
 			return null;
 		}
 
@@ -136,6 +137,10 @@ final class CompanyNormalizer
 			$weights = [2, 4, 8, 5, 0, 9, 7, 3, 6, 1, 2, 4, 8];
 		} else {
 			return null;
+		}
+
+		if (preg_match('/^0+$/', $digits)) {
+			return null; // 000000000 — wypełniacz z szablonu, nie numer REGON
 		}
 
 		$sum = 0;

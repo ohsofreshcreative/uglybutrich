@@ -55,6 +55,11 @@ class RestRegistrar
 			return true;
 		} catch (UbrException $e) {
 			return $e->toWpError();
+		} catch (\Throwable $e) {
+			// Np. błąd bazy w TenantResolver (okno migracji) — kontrolowany 500 zamiast fatal error / stack trace.
+			error_log('[ubr] REST authorize error: ' . $e->getMessage());
+
+			return new WP_Error('ubr_error', 'Wystąpił błąd serwera. Spróbuj ponownie za chwilę.', ['status' => 500]);
 		}
 	}
 

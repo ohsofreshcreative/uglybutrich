@@ -101,6 +101,8 @@ class WorkerEndpoint
 				app(\App\Ubr\Services\ContactResearchRunner::class)->tick();
 			} elseif ($job === 'clickup') {
 				app(\App\Ubr\Services\ClickUpRunner::class)->tick();
+			} elseif ($job === 'lead') {
+				app(\App\Ubr\Services\LeadIntelligenceRunner::class)->tick();
 			}
 		} catch (\Throwable $e) {
 			error_log('[ubr] Job worker "' . $job . '" failed: ' . $e->getMessage());
@@ -109,9 +111,12 @@ class WorkerEndpoint
 		exit;
 	}
 
+	/**
+	 * Test loopbacku (nieuwierzytelniony, wp ubr doctor) — tylko odpowiedź, BEZ zapisu do bazy: wcześniej każdy
+	 * odwiedzający mógł zapisywać opcję i fałszować znacznik życia workera (ukrywając zepsuty loopback).
+	 */
 	public function ping(): void
 	{
-		$this->worker->heartbeat();
 		header('Content-Type: text/plain; charset=utf-8');
 		echo 'ubr-pong';
 		exit;

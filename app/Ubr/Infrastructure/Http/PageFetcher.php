@@ -37,6 +37,7 @@ class PageFetcher
 				return $result;
 			}
 
+			$unpin = self::pin($current, $check['ips'] ?? []);
 			$response = wp_remote_get($current, [
 				'timeout' => $timeout,
 				'redirection' => 0,
@@ -46,6 +47,7 @@ class PageFetcher
 				'cookies' => [],
 				'sslverify' => true,
 			]);
+			$unpin();
 
 			if (is_wp_error($response)) {
 				$message = $response->get_error_message();
@@ -92,6 +94,37 @@ class PageFetcher
 		$result['error'] = 'Zbyt wiele przekierowań.';
 
 		return $result;
+	}
+
+	/**
+	 * Przypina połączenie cURL do adresów IP sprawdzonych przez UrlGuard (CURLOPT_RESOLVE), aby cURL nie
+	 * rozwiązywał nazwy ponownie — inaczej domena z krótkim TTL mogłaby po sprawdzeniu wskazać 127.0.0.1
+	 * lub 169.254.169.254 (DNS rebinding). Zwraca funkcję zdejmującą przypięcie.
+	 *
+	 * @param  list<string>  $ips
+	 */
+	public static function pin(string $url, array $ips): \Closure
+	{
+		$p = wp_parse_url($url);
+		$host = strtolower((string) ($p['host'] ?? ''));
+
+		if ($ips === [] || $host === '' || ! defined('CURLOPT_RESOLVE') || filter_var(trim($host, '[]'), FILTER_VALIDATE_IP)) {
+			return static function (): void {
+			};
+		}
+
+		$port = isset($p['port']) ? (int) $p['port'] : (strtolower((string) ($p['scheme'] ?? '')) === 'https' ? 443 : 80);
+		$v4 = array_values(array_filter($ips, fn ($ip) => filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)));
+		$ip = $v4[0] ?? $ips[0];
+		$entry = sprintf('%s:%d:%s', $host, $port, str_contains($ip, ':') ? '[' . $ip . ']' : $ip);
+		$hook = static function ($handle) use ($entry): void {
+			curl_setopt($handle, CURLOPT_RESOLVE, [$entry]);
+		};
+		add_action('http_api_curl', $hook, 99, 1);
+
+		return static function () use ($hook): void {
+			remove_action('http_api_curl', $hook, 99);
+		};
 	}
 
 	public static function absolute(string $location, string $base): string

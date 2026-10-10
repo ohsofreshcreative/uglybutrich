@@ -44,6 +44,10 @@ class VerificationRunner
 		$started = microtime(true);
 
 		try {
+			foreach ($this->queue->failExhausted(VerificationQueueRepository::MAX_ATTEMPTS + 1) as $dead) {
+				$this->queue->retryLater((int) $dead['id'], VerificationQueueRepository::MAX_ATTEMPTS, 'Weryfikacja przerwana — proces workera został zakończony po kilku próbach.');
+			}
+
 			while (microtime(true) - $started < $budgetSeconds) {
 				$item = $this->queue->claim(170);
 
@@ -95,6 +99,10 @@ class VerificationRunner
 		if ($this->queue->countDue() === 0 || $this->isLocked()) {
 			return false;
 		}
+
+		// Zapasowe zdarzenie WP-Cron (jak w pozostałych kolejkach) — gdy loopback jest zablokowany (częste na
+		// hostingu współdzielonym), kolejkę przetworzy systemowy cron (`wp cron event run --due-now`).
+		$this->scheduleBackup(60);
 
 		return $this->worker->dispatchJob('verify', 0);
 	}

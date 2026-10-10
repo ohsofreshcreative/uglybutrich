@@ -120,6 +120,26 @@ class VerificationQueueRepository
 		], ['id' => $id]);
 	}
 
+	/**
+	 * Pozycje „running” z wygasłą blokadą i wyczerpanym limitem prób (worker zabity: timeout, OOM, restart PHP) —
+	 * oznacza je jako 'failed' (warunkowo, bez wyścigu) i zwraca. Bez tego claim() podejmował je w nieskończoność.
+	 *
+	 * @return list<array<string, mixed>>
+	 */
+	public function failExhausted(int $maxAttempts): array
+	{
+		$now = Db::now();
+		$out = [];
+
+		foreach ($this->db->rows("SELECT * FROM {$this->t()} WHERE status = 'running' AND locked_until < %s AND attempts >= %d ORDER BY id ASC LIMIT 20", $now, $maxAttempts) as $row) {
+			if ($this->db->execute("UPDATE {$this->t()} SET status = 'failed', locked_until = NULL, updated_at = %s WHERE id = %d AND status = 'running' AND locked_until < %s", $now, (int) $row['id'], $now) > 0) {
+				$out[] = $row;
+			}
+		}
+
+		return $out;
+	}
+
 	public function countDue(): int
 	{
 		$now = Db::now();

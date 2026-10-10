@@ -15,6 +15,7 @@ use App\Ubr\Infrastructure\Repositories\CompanyRepository;
 use App\Ubr\Infrastructure\Repositories\ContactRepository;
 use App\Ubr\Infrastructure\Repositories\ContactRunRepository;
 use App\Ubr\Support\UbrException;
+use App\Ubr\Infrastructure\Http\UrlGuard;
 
 /**
  * Przypadki użycia Decision Maker Findera dla organizacji: zlecenie (pojedyncze / zbiorcze), wyniki z rankingiem
@@ -311,6 +312,8 @@ class ContactResearchService
 
 		$this->contacts->saveReview($ctx->organizationId, $contactId, (int) $contact['company_id'], $ctx->userId, $update);
 
+		do_action('ubr/company/changed', (int) $contact['company_id'], 'contacts_reviewed', $ctx->organizationId);
+
 		return $this->forCompany($ctx, (int) $contact['company_id']);
 	}
 
@@ -340,6 +343,12 @@ class ContactResearchService
 		$sourceUrl = esc_url_raw((string) ($input['source_url'] ?? ''));
 		$sourceUrl = $sourceUrl !== '' && preg_match('#^https?://#i', $sourceUrl) ? mb_substr($sourceUrl, 0, 500) : null;
 		$email = sanitize_email((string) ($input['email'] ?? '')) ?: null;
+
+		// Ogólny adres firmy (biuro@, info@, sekretariat@ …) nie jest adresem osobistym decydenta — nie zapisujemy go jako
+		// e-maila osoby (liczyłby się w Contact Priority i trafiał do eksportu jako „służbowy” adres tej osoby).
+		if ($email !== null && \App\Ubr\Domain\Contacts\PeopleExtractor::isGenericEmail($email)) {
+			throw UbrException::invalid('To ogólny adres firmy lub działu (np. biuro@, info@, sekretariat@) — nie zapisujemy go jako e-maila osoby. Zostaw pole puste; ogólne kanały firmy są pokazywane osobno.');
+		}
 		$key = $name->key();
 
 		if ($this->contacts->isSuppressed($companyId, $key)) {
@@ -372,6 +381,8 @@ class ContactResearchService
 			'flags' => ['user_provided' => true, 'marketing_focus' => $role['marketing_focus']], 'active' => 1, 'research_version' => DecisionMakerFinderService::RESEARCH_VERSION, 'created_by' => $ctx->userId,
 		]);
 		$this->contacts->addSource($id, null, $contact['sources'][0] + ['confidence' => $conf['level']]);
+
+		do_action('ubr/company/changed', $companyId, 'contacts_reviewed', $ctx->organizationId);
 
 		return $this->forCompany($ctx, $companyId);
 	}
@@ -440,11 +451,11 @@ class ContactResearchService
 			'email_note' => $c['public_business_email'] ? null : 'Brak publicznego adresu e-mail',
 			'role_email' => ! empty($c['flags']['role_email']) ? ['value' => $c['flags']['role_email'], 'label' => 'E-mail działu (nie osobisty)'] : null,
 			'phone' => $c['public_business_phone'] ?: null,
-			'profile_url' => $c['professional_profile_url'] ?: null,
+			'profile_url' => UrlGuard::httpUrl($c['professional_profile_url'] ?? null),
 			'sources' => array_map(fn ($s) => [
 				'type' => $s['source_type'],
 				'label' => ContactSources::label((string) $s['source_type']),
-				'url' => $s['source_url'],
+				'url' => UrlGuard::httpUrl($s['source_url'] ?? null),
 				'title' => $s['source_title'],
 				'observed_role' => $s['observed_role'],
 				'excerpt' => $s['evidence_excerpt'],

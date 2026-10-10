@@ -51,12 +51,40 @@ class MemberRepository
 
 	public function remove(int $organizationId, int $userId): int
 	{
-		return $this->db->delete(Tables::MEMBERS, ['organization_id' => $organizationId, 'user_id' => $userId]);
+		$removed = $this->db->delete(Tables::MEMBERS, ['organization_id' => $organizationId, 'user_id' => $userId]);
+		$this->releaseAssignments($userId, $organizationId);
+
+		return $removed;
 	}
 
 	public function removeUserEverywhere(int $userId): int
 	{
-		return $this->db->delete(Tables::MEMBERS, ['user_id' => $userId]);
+		$removed = $this->db->delete(Tables::MEMBERS, ['user_id' => $userId]);
+		$this->releaseAssignments($userId, null);
+
+		return $removed;
+	}
+
+	/**
+	 * Osoba spoza organizacji nie może zostać właścicielem prospektów / osobą przypisaną do follow-upów
+	 * (inaczej znikały z „Unassigned” i z „My Work” wszystkich), a jej reguły ClickUp nie mogą działać dalej.
+	 */
+	private function releaseAssignments(int $userId, ?int $organizationId): void
+	{
+		$org = $organizationId !== null ? ' AND organization_id = ' . (int) $organizationId : '';
+		$now = Db::now();
+		$this->db->execute("UPDATE {$this->db->table(Tables::PROSPECTS)} SET owner_user_id = NULL WHERE owner_user_id = %d{$org}", $userId);
+		$this->db->execute("UPDATE {$this->db->table(Tables::PROSPECT_FOLLOWUPS)} SET assigned_user_id = NULL, updated_at = %s WHERE assigned_user_id = %d{$org}", $now, $userId);
+
+		try {
+			$this->db->execute("UPDATE {$this->db->table(Tables::CLICKUP_RULES)} SET enabled = 0, updated_at = %s WHERE created_by = %d{$org}", $now, $userId);
+		} catch (\Throwable) {
+			// Tabela reguł niezmigrowana — nic do wyłączenia.
+		}
+
+		if ($organizationId !== null) {
+			\App\Ubr\Services\ActionCenterService::bumpOrganization($organizationId);
+		}
 	}
 
 	public function countOwners(int $organizationId): int

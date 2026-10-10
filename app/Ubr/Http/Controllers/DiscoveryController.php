@@ -67,7 +67,7 @@ class DiscoveryController
 				'min_contact_score' => (int) $request->get_param('min_contact_score'),
 				'contact_confidence' => sanitize_key((string) $request->get_param('contact_confidence')),
 				'contact_role' => sanitize_key((string) $request->get_param('contact_role')),
-			]
+			] + \App\Ubr\Infrastructure\Repositories\LeadFilters::fromQuery($request->get_params())
 		);
 	}
 

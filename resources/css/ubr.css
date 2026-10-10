@@ -158,3 +158,8 @@
 	--ubr-logo: url('../images/ubr-logo.png');
 	--ubr-icon: url('../images/ubr-icon.png');
 }
+
+@utility ubr-menu-item {
+	@apply flex w-full items-center gap-2.5 rounded-lg px-2.5 h-9 text-left font-semibold text-ink transition hover:bg-canvas focus:bg-canvas focus:outline-none
+		disabled:text-ink-muted disabled:cursor-not-allowed disabled:hover:bg-transparent;
+}

@@ -17,6 +17,7 @@ use App\Ubr\Infrastructure\Registry\KrsClient;
 use App\Ubr\Infrastructure\Repositories\CompanyRepository;
 use App\Ubr\Infrastructure\Repositories\ContactRepository;
 use App\Ubr\Infrastructure\Repositories\ContactRunRepository;
+use App\Ubr\Infrastructure\Http\UrlGuard;
 
 /**
  * Decision Maker Finder — jedno wyszukiwanie decydentów firmy (wykonywane w tle przez ContactResearchRunner).
@@ -269,9 +270,9 @@ class DecisionMakerFinderService
 			'employment_status' => $c['employment_status'],
 			'public_business_email' => $c['email'],
 			'public_business_phone' => $c['phone'],
-			'professional_profile_url' => $c['profile'] ? mb_substr((string) $c['profile'], 0, 300) : null,
+			'professional_profile_url' => UrlGuard::httpUrl($c['profile'] ?? null) ? mb_substr((string) $c['profile'], 0, 300) : null,
 			'source_type' => $c['sources'][0]['source_type'] ?? null,
-			'source_url' => isset($c['sources'][0]['source_url']) ? mb_substr((string) $c['sources'][0]['source_url'], 0, 500) : null,
+			'source_url' => UrlGuard::httpUrl($c['sources'][0]['source_url'] ?? null) ? mb_substr((string) $c['sources'][0]['source_url'], 0, 500) : null,
 			'source_observed_at' => $now,
 			'last_verified_at' => $now,
 			'rank_position' => $c['rank_position'] ?? null,

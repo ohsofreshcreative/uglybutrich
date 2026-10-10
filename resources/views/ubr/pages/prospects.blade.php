@@ -98,6 +98,31 @@
 					<option value="">Aktywne</option><option value="1">Zarchiwizowane</option>
 				</select>
 			</div>
+			<div class="w-[150px]">
+				<label class="ubr-label" for="p-lead">Lead Potential</label>
+				<select id="p-lead" class="ubr-input" x-model="filters.min_lead" @change="load(1)">
+					<option value="">Dowolny</option><option value="40">≥ 40</option><option value="55">≥ 55</option><option value="70">≥ 70</option>
+				</select>
+			</div>
+			<div class="w-[140px]">
+				<label class="ubr-label" for="p-lconf">Pewność oceny</label>
+				<select id="p-lconf" class="ubr-input" x-model="filters.lead_confidence" @change="load(1)">
+					<option value="">Dowolna</option><option value="high">HIGH</option><option value="medium">MEDIUM</option><option value="low">LOW</option>
+				</select>
+			</div>
+			<div class="w-[180px]">
+				<label class="ubr-label" for="p-rec">Rekomendacja</label>
+				<select id="p-rec" class="ubr-input" x-model="filters.recommendation" @change="load(1)">
+					<option value="">Dowolna</option><option value="contact_now">Contact now</option><option value="review_website">Review website</option><option value="find_decision_maker">Find decision maker</option><option value="research_further">Research further</option><option value="verify_company">Verify company</option><option value="low_priority">Low priority</option><option value="do_not_contact">Do not contact</option>
+				</select>
+			</div>
+			<div class="w-[160px]">
+				<label class="ubr-label" for="p-red">Redesign</label>
+				<select id="p-red" class="ubr-input" x-model="filters.redesign" @change="load(1)">
+					<option value="">Dowolnie</option><option value="strong">STRONG</option><option value="moderate">MODERATE</option><option value="weak">WEAK</option><option value="insufficient_data">INSUFFICIENT DATA</option>
+				</select>
+			</div>
+			<label class="flex items-center gap-2 text-[12px] h-10"><input type="checkbox" class="ubr-checkbox" :checked="!!filters.no_blockers" @change="filters.no_blockers = $event.target.checked ? '1' : ''; load(1)"> Bez twardych przeszkód</label>
 			<div class="w-[110px]">
 				<label class="ubr-label" for="p-per">Na stronę</label>
 				<select id="p-per" class="ubr-input" x-model.number="list.per_page" @change="load(1)">
@@ -132,11 +157,11 @@
 			</template>
 
 			<div class="overflow-x-auto" x-show="list.items.length" :class="list.loading ? 'opacity-60' : ''">
-				<table class="ubr-table min-w-[2050px]">
+				<table class="ubr-table min-w-[2170px]">
 					<thead>
 						<tr>
 							<th class="w-8"><input type="checkbox" class="ubr-checkbox" :checked="allSelected" @change="toggleAll()" aria-label="Zaznacz wszystkie na stronie"></th>
-							@foreach (['pipeline_status' => 'Status', 'priority' => 'Priorytet', 'opportunity' => 'Opportunity', 'contact_priority' => 'Decydent (Top 1)', 'relevance' => 'Trafność', 'name' => 'Firma', 'verification' => 'Status firmy', 'analyzed_at' => 'Analiza', 'industry' => 'Branża', 'region' => 'Województwo', 'next_action_at' => 'Następne działanie', 'created_at' => 'Zapisano'] as $key => $label)
+							@foreach (['pipeline_status' => 'Status', 'priority' => 'Priorytet', 'rank' => 'Lead (ranking)', 'opportunity' => 'Opportunity', 'contact_priority' => 'Decydent (Top 1)', 'relevance' => 'Trafność', 'name' => 'Firma', 'verification' => 'Status firmy', 'analyzed_at' => 'Analiza', 'industry' => 'Branża', 'region' => 'Województwo', 'next_action_at' => 'Następne działanie', 'created_at' => 'Zapisano'] as $key => $label)
 								<th>
 									<button type="button" class="inline-flex items-center gap-1 uppercase hover:text-ink" @click="sortBy('{{ $key }}')">
 										{{ $label }}
@@ -157,13 +182,14 @@
 									<button type="button" class="ubr-badge-declared hover:underline" @click="$store.ubr.drawer.tab = 'sales'; $store.ubr.openCompany(c.id)" x-text="c.pipeline ? c.pipeline.label : '—'" title="Otwórz sekcję Sprzedaż"></button>
 								</td>
 								<td class="whitespace-nowrap"><span :class="$store.ubr.priorityBadge(c.pipeline?.priority)" x-text="c.pipeline?.priority_label || '—'"></span></td>
+								<td class="whitespace-nowrap">@include('ubr.partials.lead-cell', ['var' => 'c'])</td>
 								<td class="whitespace-nowrap">@include('ubr.partials.opportunity-cell', ['var' => 'c'])</td>
 								<td>@include('ubr.partials.contacts-cell', ['var' => 'c'])</td>
 								<td class="whitespace-nowrap"><span :class="$store.ubr.relevanceClass(c.relevance)" x-text="c.relevance === null ? '—' : c.relevance" title="Najwyższa trafność firmy w wyszukiwaniach organizacji"></span></td>
 								<td class="min-w-[240px] max-w-[300px]">
 									<button type="button" class="font-bold text-left hover:underline" @click="$store.ubr.openCompany(c.id)" x-text="c.name"></button>
 									<div class="flex items-center gap-1.5 mt-0.5">
-										<template x-if="c.domain"><a :href="c.website_url" target="_blank" rel="noopener nofollow" class="text-[12px] text-ink-soft hover:underline" x-text="c.domain"></a></template>
+										<template x-if="c.domain"><a :href="$store.ubr.safeHref(c.website_url)" target="_blank" rel="noopener nofollow" class="text-[12px] text-ink-soft hover:underline" x-text="c.domain"></a></template>
 										<span x-show="!c.domain" class="text-[12px] text-ink-muted">brak domeny</span>
 										<span x-show="c.domain" :class="$store.ubr.domainBadge(c.domain_status.status)" x-text="c.domain_status.label"></span>
 									</div>
@@ -183,14 +209,14 @@
 								<td class="text-[12px] whitespace-nowrap" x-text="c.pipeline?.owner?.name || '—'"></td>
 								<td class="text-[12px] whitespace-nowrap">
 									<template x-if="c.pipeline?.clickup_task_url">
-										<a :href="c.pipeline.clickup_task_url" target="_blank" rel="noopener" class="inline-flex items-center gap-1 ubr-badge-confirmed hover:underline">Exported @include('ubr.partials.icon', ['name' => 'external', 'class' => 'size-3'])</a>
+										<a :href="$store.ubr.safeHref(c.pipeline.clickup_task_url)" target="_blank" rel="noopener" class="inline-flex items-center gap-1 ubr-badge-confirmed hover:underline">Exported @include('ubr.partials.icon', ['name' => 'external', 'class' => 'size-3'])</a>
 									</template>
 									<template x-if="!c.pipeline?.clickup_task_url">
 										<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="canExport && !c.pipeline?.archived" @click="$store.ubr.exportClickup(c.id)" :title="'Eksportuj „' + c.name + '” do ClickUp'">Eksportuj</button>
 									</template>
 								</td>
 								<td class="text-right whitespace-nowrap">
-									<span class="inline-flex gap-1.5 mr-1.5">@include('ubr.partials.analysis-actions', ['var' => 'c'])@include('ubr.partials.contacts-actions', ['var' => 'c'])</span>
+									<span class="inline-flex align-middle mr-1.5">@include('ubr.partials.row-actions', ['var' => 'c'])</span>
 									<template x-if="c.pipeline?.archived">
 										<button type="button" class="ubr-btn-ghost ubr-btn-sm" @click="restore(c)">Przywróć</button>
 									</template>

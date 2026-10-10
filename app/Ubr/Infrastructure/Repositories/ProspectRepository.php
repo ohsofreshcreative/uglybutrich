@@ -185,31 +185,42 @@ class ProspectRepository
 			$where[] = 'c.domain IS NULL';
 		}
 
+		// Filtry Lead Intelligence (ocena organizacji, alias li).
+		$leadArgs = [];
+		$leadWhere = LeadFilters::where($filters, $leadArgs);
+
+		if ($leadWhere !== '') {
+			$where[] = substr($leadWhere, 5);
+			array_push($args, ...$leadArgs);
+		}
+
 		$orderBy = self::SORTABLE[$sort] ?? 'p.created_at';
 		$dir = strtolower($direction) === 'asc' ? 'ASC' : 'DESC';
+		$leadOrder = LeadFilters::order($sort, 'p.id DESC');
 		$whereSql = implode(' AND ', $where);
 		// Trafność prospektu = najwyższa trafność firmy w wyszukiwaniach TEJ organizacji.
 		$from = "{$this->db->table(Tables::PROSPECTS)} p
 			INNER JOIN {$this->db->table(Tables::COMPANIES)} c ON c.id = p.company_id
 			LEFT JOIN (
 				SELECT company_id, MAX(relevance_score) AS relevance_score FROM {$this->db->table(Tables::RESULTS)} WHERE organization_id = %d GROUP BY company_id
-			) rel ON rel.company_id = p.company_id";
+			) rel ON rel.company_id = p.company_id"
+			. LeadFilters::join('p.company_id', 'p.organization_id', $this->db->table(Tables::LEAD_INTELLIGENCE));
 		array_unshift($args, $organizationId);
 
 		$total = (int) $this->db->value("SELECT COUNT(*) FROM {$from} WHERE {$whereSql}", ...$args);
 		$items = $this->db->rows(
-			"SELECT c.*, p.id AS prospect_id, p.status, p.status AS pipeline_status, p.priority, p.owner_user_id, p.qualification, p.next_action_at, p.last_activity_at, p.archived_at, p.created_at AS saved_at, rel.relevance_score,
+			"SELECT c.*, p.id AS prospect_id, p.status, p.status AS pipeline_status, p.priority, p.owner_user_id, p.qualification, p.next_action_at, p.last_activity_at, p.archived_at, p.created_at AS saved_at, rel.relevance_score, " . LeadFilters::select() . ",
 				(SELECT e.task_url FROM {$this->db->table(Tables::CLICKUP_EXPORTS)} e WHERE e.organization_id = p.organization_id AND e.company_id = p.company_id AND e.export_status = 'success' ORDER BY e.id DESC LIMIT 1) AS clickup_task_url
 			FROM {$from}
 			WHERE {$whereSql}
-			ORDER BY " . match ($orderBy) {
+			ORDER BY " . ($leadOrder ?? match ($orderBy) {
 				'relevance_score' => 'COALESCE(rel.relevance_score, -1)',
 				'opportunity_score' => 'COALESCE(c.opportunity_score, -1)',
 				'top_contact_score' => 'COALESCE(c.top_contact_score, -1)',
 				'p.priority' => "FIELD(p.priority, 'low', 'medium', 'high', 'urgent')",
 				'p.next_action_at' => 'COALESCE(p.next_action_at, \'9999-12-31\')',
 				default => $orderBy,
-			} . " {$dir}, p.id DESC
+			} . " {$dir}, p.id DESC") . "
 			LIMIT %d OFFSET %d",
 			...array_merge($args, [$perPage, ($page - 1) * $perPage])
 		);

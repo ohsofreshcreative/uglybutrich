@@ -410,3 +410,270 @@ Authorization Code wg dokumentacji ClickUp (`https://app.clickup.com/api?client_
 
 ### Reguły automatyczne
 `ClickUpRuleService`: warunki AND (VERIFIED, domena CONFIRMED, Relevance/Opportunity/Contact Priority ≥ X, min. 1/2 decydentów wg widoku organizacji, status pipeline, priorytet). Tworzy i włącza wyłącznie autor (połączenie autora), domyślnie wyłączona; Dry Run; włączenie z potwierdzeniem działa tylko dla nowych zdarzeń: `do_action('ubr/company/changed', $companyId, $reason, $orgId)` po dodaniu do Prospects, zakończeniu weryfikacji, analizy, wyszukiwania kontaktów i zmianie statusu/priorytetu → zadanie `evaluate` w kolejce → ewentualnie `create`. Backfill tylko po osobnym potwierdzeniu, w granicach limitu dziennego reguły. Rozłączenie konta wyłącza jego reguły. Reguły nie uruchamiają analiz.
+
+## 13. Lead Intelligence (Prompt 5)
+
+Warstwa rekomendacji nad istniejącymi danymi. **Nie zmienia** Relevance / Opportunity / Contact Priority Score, nie uruchamia analiz, crawlera, Decision Maker Findera ani płatnych API, nie zmienia pipeline. Liczy wyłącznie zapisane dane.
+
+### Komponenty
+- `Domain/Lead/InsightRuleRegistry` — reguły: grupy findingów (jedna przyczyna = jeden wniosek), 7 kategorii (Performance, Mobile, Accessibility, UX, Content Structure, Technical, Conversion), opisy, rekomendacje, argumenty sprzedażowe, mapowanie tej samej przyczyny z dwóch metod pomiaru (np. `a11y_labels` + `axe_label`).
+- `WebsiteInsightGenerator` — wnioski z findingów ostatniej zakończonej analizy (każdy finding ma dowód; finding bez dowodu, `manual_review` i kategorie business/company/design są pomijane). Severity z progów: maks. severity findingów grupy; CRITICAL tylko z krytycznego findingu; +1 poziom (maks. HIGH) dopiero przy ≥ 3 różnych przyczynach ≥ MEDIUM. Evidence: pomiar, wykryty problem, źródło (axe-core / render Chromium / analiza HTML), data analizy.
+- `RedesignAssessor` — STRONG / MODERATE / WEAK / INSUFFICIENT_DATA (progi w klasie; sama wydajność/technika nigdy nie daje STRONG; warstwa wizualna nieoceniana — AI Vision wyłączone).
+- `LeadPotentialCalculator` — Lead Potential Score + Data Coverage.
+- `LeadRecommender` — hard blockers, soft warnings, Data Confidence, Recommended Next Action, Smart Ranking.
+- `LeadResearchSummaryBuilder` — podsumowanie (7 sekcji), „Why this company?”, Potential Sales Angles (tylko z wniosków ≥ MEDIUM, z dowodem).
+- `LeadIntelligenceService` (snapshot danych → obliczenie → zapis + historia + prezentacja), `LeadIntelligenceRunner` (batch w tle), `LeadIntelligenceRepository`, `LeadFilters` (SQL filtrów/sortowania na listach).
+
+### Semantyka Opportunity Score (audyt)
+`OpportunityScoreCalculator`: **wysoki = słaba strona + duży potencjał firmy** (A słabość strony 45, B technika 20, C potencjał biznesowy 25, D wiarygodność 10). Lead Intelligence **nie używa łącznego wyniku** (zawiera C i D, które w Lead Potential są liczone osobno jako Business Fit i Company Trust — groziłoby podwójne liczenie). Używane są tylko kryteria A i B (bez kryterium AI `a_visual_ai`), z ich zachowaną semantyką: więcej punktów = większa słabość = większa szansa na redesign.
+
+### Lead Potential Score (0–100), wersja `lead-2026-10-v2`
+| Składowa | Maks. | Podkryteria |
+|---|---|---|
+| Website Redesign Opportunity | 45 | słabość strony i techniki (22,5: udział zdobytych pkt kryteriów A+B bez AI, pełna pula od 60%) + niezależne kategorie wniosków ≥ MEDIUM (22,5: 0/1/2/3/4+ → 0 / 35 / 60 / 80 / 100%) — dwie miary tej samej warstwy uśredniane, nie sumowane |
+| Business Fit | 30 | Relevance organizacji (15, liniowo), segment z PKD (rejestr) albo SIC (9; instytucje/media/katalogi = 0, konsumencki = 5 bo agencja robi też B2C/WooCommerce), wielkość (6; 1–9: 3, 10–49: 5, 50–249: 6, 250–999: 5, 1000+: 4 — skala serwisu, nie budżet) |
+| Company Trust | 15 | rejestr (VERIFIED 9, UNCERTAIN 4, INACTIVE/SUSPENDED 0), domena (CONFIRMED 6, UNCERTAIN 3, UNAVAILABLE 1, MISMATCH 0) |
+| Contact Readiness | 10 | wiarygodne osoby (≥2: 5, 1: 3), Contact Priority Top 1 (≥70: 3, ≥50: 2, >0: 1), oficjalny kanał (2) — w widoku organizacji (odrzucone/wykluczone nie liczą się) |
+
+**Zmiana wag względem propozycji (40/25/15/10/10):** punkt E „Data Completeness” usunięty z wyniku i raportowany osobno jako Data Coverage + Confidence (prompt §6: nie mieszać wartości biznesowej z kompletnością); jego 10 pkt przesunięte: +5 do strony (główne pytanie biznesowe), +5 do Business Fit.
+
+**Brak danych:** podkryterium bez danych = niezmierzone (nie 0) i wypada z mianownika: wynik = zdobyte / zmierzone × 100, ograniczony limitem `55 + 45 × w` (w = udział zmierzonych wag) — jeden sygnał nie daje 100/100; **bez danych o stronie limit 65** (walidacja biznesowa: firma bez analizy nie może wyprzedzić firmy z potwierdzonymi problemami tylko dzięki normalizacji). `w < 0,35` albo brak zarówno strony jak i Business Fit → `INSUFFICIENT_DATA` (wynik null). `PROVISIONAL`: Data Coverage < 70% albo brak analizy albo `w < 0,85`.
+
+**Data Coverage** (osobno, %): weryfikacja firmy 15, domeny 15, analiza strony 25, aktualna analiza ≤ 180 dni 10, render 5, Relevance 10, branża 7, wielkość 5, research decydentów 8.
+**Data Confidence:** HIGH = coverage ≥ 80 + VERIFIED + domena CONFIRMED + aktualna analiza; MEDIUM = coverage ≥ 55 i firma weryfikowana; inaczej LOW.
+
+### Hard blockers / soft warnings
+- Hard: firma INACTIVE / SUSPENDED, domena MISMATCH (domena innego podmiotu = sprzeczność identyfikacji), wykluczenie przez organizację (prospekt `not_a_fit` — status lub kwalifikacja; prywatne). Skutek: nigdy CONTACT_NOW, ranking 0 (koniec listy), potencjał nadal widoczny.
+- Soft: UNCERTAIN / niezweryfikowana, domena niepotwierdzona / brak domeny, brak / nieudana / stara (>180 dni) / bez renderu analiza, coverage < 60%, brak researchu / brak osób, rekord niekomercyjny, rozbieżności danych. Wpływają na confidence, ranking i rekomendację — nie na potencjał.
+
+### Recommended Next Action (pierwsza pasująca reguła; pozostałe trafione = „również do rozważenia”)
+1. DO_NOT_CONTACT — nieaktywna / zawieszona / wykluczona; 2. VERIFY_COMPANY — MISMATCH; 3. LOW_PRIORITY — rekord niekomercyjny; 4. RESEARCH_FURTHER — INSUFFICIENT_DATA; 5. VERIFY_COMPANY — firma lub domena niepotwierdzona; 6–7. RESEARCH_FURTHER — brak analizy / za mało pomiarów; 8. LOW_PRIORITY — wynik < 40; 9. REVIEW_WEBSITE — WEAK przy dobrym dopasowaniu (≥ 60% Business Fit; wygląd nieoceniony); 10. LOW_PRIORITY — WEAK; 11. REVIEW_WEBSITE — MODERATE; 12. RESEARCH_FURTHER — STRONG przy coverage < 60% / LOW; 13. FIND_DECISION_MAKER — STRONG bez researchu albo bez osoby i kanału; 14. CONTACT_NOW — STRONG, wynik ≥ 55; domyślnie REVIEW_WEBSITE. Brak osobistego e-maila nie blokuje CONTACT_NOW.
+
+### Smart Lead Ranking
+`rank = Lead Potential × (0,6 + 0,4 × coverage) × (0,9 gdy analiza nieaktualna)`; blokery = 0 (koniec), brak wyniku = poza rankingiem. Sortowanie w SQL: `has_blocker ASC, rank IS NULL, rank DESC, lead_score DESC, coverage DESC, company_id ASC` — deterministyczne, bez losowości. Wyjaśnienie rankingu zapisywane przy ocenie.
+
+### Model danych (M007), cache, przeliczanie
+- `ubr_lead_intelligence` — bieżąca ocena **per organizacja** (UNIQUE org+company; Relevance, wykluczenia i decyzje o kontaktach są prywatne): kolumny do filtrów/sortowania (lead_score, confidence, coverage, redesign, recommendation, rank_score, has_blocker), `input_snapshot`, `input_hash`, `result`, `algorithm_version`, `stale`.
+- `ubr_lead_insights` — wnioski per firma (dane publiczne z analizy), UNIQUE company+insight_key; przepisywane tylko przy nowej analizie lub wersji reguł.
+- `ubr_lead_intelligence_history` — wpis tylko przy zmianie `input_hash` (dane wejściowe + wersja) lub wyniku/rekomendacji; zmiana wersji algorytmu = nowy wpis z przyczyną „nowa wersja algorytmu”.
+- Przeliczanie: `ubr/company/changed` (verification_done, analysis_done, contacts_done, contacts_reviewed, relevance_changed, prospect_added, pipeline_changed) → `stale = 1` → `LeadIntelligenceRunner` (worker `ubr_job_worker` → 'lead', WP-Cron `ubr_lead_tick`, healthcheck; batch 50, łańcuchowo). Firmy widoczne bez oceny oraz starsza wersja algorytmu są dobierane automatycznie. Listy (Discover / Prospects) tylko czytają kolumny (LEFT JOIN, bez N+1); profil firmy liczy ocenę od razu, jeśli jest nieaktualna.
+
+### REST i UI
+`GET /companies/{id}/lead-intelligence`, `POST …/recalculate`, `GET /lead-intelligence/top` (uprawnienie `companies.view`, widoczność firmy → IDOR 404). Discover/Prospects: kolumna „Lead”, filtry `min_lead`, `lead_confidence`, `redesign`, `recommendation`, `no_blockers`, sortowanie `rank` / `lead` / `redesign`. Karta firmy: zakładka „Lead Intelligence” (wynik, confidence, coverage, redesign, rekomendacja; Why this company?, insights z dowodami, sales angles, decydenci, ryzyka i braki, summary, score breakdown zgodny z obliczeniem, historia). Dashboard: Smart Lead Ranking (top 5).
+
+### Ograniczenia
+Brak oceny wizualnej (AI Vision wyłączone) — WEAK nie znaczy „dobra strona”; brak Lighthouse/CrUX — wydajność to jeden pomiar laboratoryjny; wielkość firmy często nieznana; Relevance zależy od kryteriów wyszukiwań organizacji; skuteczność sprzedażowa niezweryfikowana (brak wyników prospectingu).
+
+## 14. Discover UI + wspólny podgląd strony (Prompt 5.1)
+
+Zmiana wyłącznie warstwy UI — bez migracji, bez zmian w scoringu, wyszukiwaniu, ClickUp i endpointach.
+
+### Układ Discover (`resources/views/ubr/pages/discover.blade.php`)
+Pionowo, na pełną szerokość obszaru treści (sidebar bez zmian): **Formularz → Status → Filtry → Wyniki**.
+- Formularz „Czego szukamy?”: CSS Grid (`xl:grid-cols-12`, dostawcy `md:2 / xl:3` kolumny), sekcja zwijana („Zwiń” / „Rozwiń”, `aria-expanded`, `aria-controls`), po udanym starcie wyszukiwania zwija się automatycznie; wartości pól zostają w stanie Alpine (x-show, nie x-if), stan zwinięcia w `localStorage` (`ubr_discover_form`, try/catch). Zwinięty nagłówek pokazuje podsumowanie kryteriów.
+- Filtry i sortowanie: `flex-wrap` — zawijają się do kolejnych wierszy, bez przewijania w poziomie.
+- Tabela (≥ 1024 px): `table-fixed` + `colgroup` z udziałami procentowymi, bez `min-width` i bez `overflow-x-hidden`. Kolumny: wybór · Firma (2 linie, pełna nazwa w `title`) · Weryfikacja · Domena (skracana, pełna w `title` / linku) · Lokalizacja · Oceny (Lead Potential + Confidence; przycisk „Szczegóły” rozwija wiersz z Relevance, Opportunity, Contact Priority, Redesign, rekomendacją i szczegółami dopasowania) · ⋯.
+- < 1024 px: karty (`ul` z tymi samymi danymi i tym samym menu ⋯).
+- Partiale: `discover-company-cell`, `discover-domain-cell`, `discover-row-details`.
+
+### Menu akcji wiersza (`partials/row-actions.blade.php`, `ubrRowMenu` w `resources/js/ubr/ui.js`)
+Wspólne dla Discover i Prospects (zastąpiło `analysis-actions` / `contacts-actions`). Lista renderowana w `<body>` (`x-teleport`) z `position: fixed` liczonym od przycisku — nie jest obcinana przez kontener tabeli; przycisk poza ekranem jest najpierw przewijany do widoku, pozycja ograniczona do okna, otwarcie w górę przy braku miejsca. Akcje (tylko mające zastosowanie): Podgląd strony (gdy jest domena), Lead Intelligence, Karta firmy, Analizuj stronę / Analizuj ponownie / „Analiza w toku…” (`analysis.run`), Znajdź decydentów / ponownie / „w toku…” (`contacts.run`), Zapisz do Prospects / „Zapisano” (`prospects.manage`, tylko Discover). Akcje wołają istniejące metody `$store.ubr` (te same endpointy, walidacja i komunikaty błędów). Dostępność: `aria-haspopup`, `aria-expanded`, `role=menu/menuitem`, Enter/Spacja/↓ otwiera, ↑/↓/Home/End, Escape i klik poza zamykają, Tab zamyka, fokus wraca na ⋯; przy przewinięciu i zmianie rozmiaru menu podąża za przyciskiem, a zamyka się, gdy przycisk zniknie z ekranu.
+
+### Wspólny podgląd strony (`partials/preview-modal.blade.php`, `openPreview()` w `$store.ubr`)
+Jeden komponent dla Discover, Prospects i karty firmy (miniatury w zakładce Website Analysis otwierają tryb SCREENSHOT).
+- **LIVE (domyślny):** `iframe` z zapisanym `website_url` firmy, po walidacji `safeWebsiteUrl()` (tylko `http:`/`https:`, bez danych logowania w URL, poprawny host). Niepoprawny adres → brak iframe, LIVE wyłączony, komunikat. Gdy aplikacja działa na https (produkcja), a zapisany adres to http://, iframe ładuje wersję https:// tej samej strony (`livePreviewUrl()`; iframe http byłby zablokowany przez przeglądarkę jako mixed content) — z widoczną informacją; „Otwórz stronę” zawsze używa zapisanego adresu. `sandbox="allow-scripts allow-same-origin allow-forms allow-popups"` (bez `allow-top-navigation`, `allow-modals`, `allow-downloads`), `allow` blokuje kamerę, mikrofon, lokalizację, płatności, USB, schowek i przechwytywanie ekranu, `referrerpolicy="no-referrer"`. Bez proxy i bez obchodzenia `X-Frame-Options` / CSP `frame-ancestors` — strony blokujące osadzanie wyświetlą pusty obszar / błąd przeglądarki; stały komunikat wskazuje Screenshot lub „Otwórz stronę”. Uwaga: `sandbox` może ograniczyć część stron (np. wymagających okien modalnych, pobierania plików lub nawigacji całej karty) — wtedy „Otwórz stronę”. Nie ufamy `iframe.onload` (nie odróżnia blokady od sukcesu) — nie pokazujemy „załadowano”.
+- **SCREENSHOT:** ostatnie zrzuty Website Analyzera z `GET /companies/{id}/analysis` (pobierane dopiero przy otwarciu modalu); brak zrzutów → empty state. Podgląd nigdy nie generuje zrzutów ani nie uruchamia analizy / Decision Maker Findera / Apollo.
+- **DESKTOP | MOBILE:** mobile = obszar 390 px wyśrodkowany.
+- Nagłówek: nazwa, adres, przełączniki, „Otwórz stronę” (`target=_blank`, `rel="noopener noreferrer"`), „Zamknij”. Dostępność: `role=dialog`, `aria-modal`, etykieta, pułapka fokusu, fokus na „Zamknij”, Escape, przywrócenie fokusu na element wywołujący, blokada przewijania tła (`overflow-hidden` na `<html>`).
+
+### Wydajność
+Brak zapytań per wiersz: tabela korzysta z pól zwracanych już przez `/discovery/searches/{id}/results` i `/prospects`; dane podglądu ładowane tylko po otwarciu modalu.
+
+## 15. Prospecting Dashboard & Action Center (Prompt 6)
+
+Dashboard `/app/` = centrum codziennej pracy. Tylko odczyt zapisanych danych: Lead Intelligence, firmy, Pipeline. Nie uruchamia analiz, crawlera, Apollo, Decision Maker Findera ani ClickUp. Jedyne zapisy to ręczne odłożenie działania (M008) i ręczna ocena strony (M009).
+
+Pliki:
+- Domena: `app/Ubr/Domain/ActionCenter/ActionPriorityEngine.php`, `QueueCatalog.php`.
+- Read model: `ActionCenterRepository`.
+- Serwisy: `ActionCenterService`, `ManualReviewService` + `ManualReviewRepository`.
+- REST: `ActionCenterController`.
+- UI: `pages/dashboard.blade.php`, `partials/ac-action-menu.blade.php`, `partials/manual-review.blade.php`, `resources/js/ubr/dashboard.js`.
+- Testy: `tests/action-center.php`.
+
+### Zakres danych (tenant-private)
+- „Pula organizacji” = firmy z wyników wyszukiwań organizacji + jej aktywni prospekci. To ten sam zbiór, który ocenia Lead Intelligence (wiersze `ubr_lead_intelligence` organizacji), nigdy cała globalna baza firm.
+- Dane firm (weryfikacja, analiza, decydenci) są wspólne. Prywatne dla organizacji są: zapis do Prospects, pipeline, notatki, follow-upy, przypisania, wykluczenia, odłożenia i oceny ręczne.
+- Zarchiwizowani prospekci są pomijani (decyzja operatora). Firmy jeszcze nieocenione przez Lead Intelligence są liczone jako „czeka na ocenę” i nie trafiają do list (bez zgadywania).
+- Filtr zakresu: `all` (odkryte), `prospects` (zapisane), `not_prospects` (niezapisane). Lista Follow-ups obejmuje wyłącznie prospektów organizacji.
+
+### Action Priority Engine (odrębny od Lead Potential)
+Lead Potential mówi, JAK atrakcyjna jest firma. Action Priority mówi, CO zrobić teraz. Silnik nie liczy żadnego wyniku: stosuje kategorie w stałej kolejności i stabilne remisy.
+
+Kategorie:
+
+| Tier | Typ | Priorytet | Skąd |
+|---|---|---|---|
+| 1 | FOLLOW_UP_OVERDUE | critical | otwarty follow-up z terminem < teraz |
+| 2 | FOLLOW_UP_DUE | high | termin od teraz do końca dnia (strefa WP) |
+| 3 | CONTACT_READY | high | rekomendacja Contact now **i** zakończona analiza (COMPLETED/PARTIAL) |
+| 4 | FIND_DECISION_MAKER | medium | rekomendacja Find decision maker |
+| 5 | REVIEW_WEBSITE | medium | rekomendacja Review website |
+| 6 | VERIFY_COMPANY | medium | rekomendacja Verify company |
+| 7 | ANALYSIS_MISSING | low | Contact now bez analizy albo Research further + domena bez analizy |
+| 8 | RESEARCH_FURTHER | low | pozostałe Research further |
+
+Brak działania z rekomendacji, gdy firma:
+- nie ma oceny Lead Intelligence,
+- jest zarchiwizowanym prospektem,
+- ma hard blocker (lista Blocked),
+- ma status zamknięty (Won / Lost / Not a fit) albo trwa rozmowa (Contacted, Follow up, In discussion, Proposal sent) — wtedy pracą sterują follow-upy,
+- ma otwarty follow-up (dedup: działanie już zaplanowane),
+- ma rekomendację Low priority / Do not contact,
+- ma działanie odłożone ręcznie.
+
+Ta sama reguła istnieje w PHP (`classify()`) i w SQL (`sqlType()`); test porównuje obie na danych testowych.
+
+Remisy w kategorii, w tej kolejności: priorytet prospekta (urgent → high → pozostałe), Smart Ranking (`rank_score`), Lead Potential, Data Coverage, prospekt przed nie-prospektem, ID firmy. Follow-upy porządkuje termin rosnąco, potem ID.
+
+Zasady merytoryczne:
+- Wysoki Lead Potential nigdy nie wypiera zaległego follow-upu.
+- Bez analizy firma nigdy nie jest „gotowa do kontaktu”.
+- Brak decydenta nie obniża potencjału. Prospekci przed kontaktem bez wyszukanych decydentów trafiają do listy Find Decision Maker.
+
+### Today's Priorities i deduplikacja
+- Maksymalnie 5 działań naraz (kolejne strony na żądanie). Najpierw follow-upy zaległe i dzisiejsze, potem działania z rekomendacji w kolejności silnika.
+- Firma występuje najwyżej raz. Follow-upy są grupowane per firma (najwcześniejszy termin + „i jeszcze N”). Firma z otwartym follow-upem nie dostaje działania z rekomendacji.
+- Każda pozycja ma: firmę i domenę, typ, przyczynę (uzasadnienie z Lead Intelligence), priorytet, Lead Potential / Confidence, termin tylko dla follow-upów (bez wymyślonych terminów), jedno CTA do istniejącego workflow i link do karty firmy.
+
+### Listy robocze (Smart Queues)
+Wszystkie są przefiltrowanymi widokami tej samej puli, bez kopii rekordów. Definicje znajdują się w `QueueCatalog::QUEUES` (wyświetlane w UI i API):
+
+| Lista | Definicja |
+|---|---|
+| Top Opportunities | Smart Lead Ranking (kolejność `LeadFilters::RANK_ORDER`, bez nowego scoringu), bez blokerów i zamkniętych. Domyślnie 10 na stronę. |
+| Needs Attention | Działania typu Find DM / Review / Verify / Missing analysis / Research — jedna główna kategoria na firmę. Pozostałe braki (soft warnings Lead Intelligence) są informacją pomocniczą. |
+| Ready to Contact | Kategoria CONTACT_READY. Pokazuje najlepszego decydenta, stanowisko i znalezione kanały firmowe wyłącznie z zapisanych danych (bez generowania e-maili i telefonów). Ma komunikat pustego stanu. |
+| Review Website / Needs Research / Verify Company | Odpowiednie kategorie silnika. |
+| Find Decision Maker | Rekomendacja Find decision maker lub prospekt przed kontaktem bez wyszukanych decydentów. |
+| Missing Website Analysis | Domena bez zakończonej analizy, bez blokera, poza statusami zamkniętymi. Analizę uruchamia operator przyciskiem (istniejące limity). |
+| High Potential | Lead Potential ≥ 70 (powyżej limitu 65 dla firm bez danych o stronie), bez blokera, poza statusami zamkniętymi. |
+| Blocked | Firmy z hard blocker. |
+| Follow-ups | Otwarte follow-upy. Przedziały: zaległe, dziś, zaległe + dziś, najbliższe 7 dni, wszystkie. |
+
+Filtry: zakres (zapisane / niezapisane), minimalny Lead Potential, Confidence, województwo, branża, Redesign, rekomendacja, ocena ręczna, wyszukiwanie. Sortowanie: Smart Ranking, priorytet działania, Lead Potential, kompletność, nazwa. Filtry działają w SQL, są paginowane i dotyczą tylko bieżącej listy (nie ukrywają follow-upów ani aktywności).
+
+### KPI (Overview)
+| KPI | Definicja | Drill-down |
+|---|---|---|
+| Total Prospects | aktywni prospekci organizacji (odkryte firmy pokazane osobno w opisie) | Prospects |
+| Follow-ups Due | zaległe + na dziś (rozbicie w opisie) | Follow-ups (zaległe + dziś) |
+| Ready to Contact | jak lista | lista |
+| High Potential | jak lista | lista |
+| Needs Review | rekomendacja Review website | lista |
+| Missing Analysis | jak lista | lista |
+
+Bez trendów i procentów: brak danych historycznych do ich rzetelnego liczenia.
+
+### Prospecting Coverage zamiast lejka
+- Historia przejść statusów istnieje dopiero od Prompt 4, a etapy nie są liniowe (np. analiza bywa przed zapisem do Prospects). Dlatego pokazujemy niezależne liczniki aktualnego stanu z definicjami, bez współczynników konwersji.
+- Liczniki: pula (odkryte), zweryfikowane, domena potwierdzona, strona przeanalizowana, decydenci wyszukani, decydent znaleziony, ocenione, zakwalifikowane, zapisane, w kontakcie, wygrane, utracone. Do tego statusy pipeline i liczba eksportów do ClickUp.
+
+### Follow-ups i Recent Activity
+- Istniejące follow-upy i zdarzenia Pipeline (bez drugiego systemu).
+- Granice dnia liczone w strefie czasowej WordPressa, zapisane w UTC (`PipelineRepository::todayBounds()`, `ActionCenterRepository::bounds()`). Upcoming = 7 pełnych dni lokalnych po dzisiejszym.
+- „Wykonane” wywołuje istniejący `POST /followups/{id}`, po czym widok odświeża się natychmiast (wersjonowany cache).
+- Recent Activity: 10 ostatnich zdarzeń prospektów i zarejestrowanych aktywności organizacji (bez logów technicznych).
+
+### My Work / Team Work / Unassigned
+- Model przypisań już istnieje (`owner_user_id` prospekta, `assigned_user_id` follow-upu).
+- My Work = follow-upy przypisane mi + prospekci, których jestem właścicielem.
+- Unassigned = firmy spoza Prospects + prospekci bez właściciela (follow-upy bez przypisania).
+- Team = cała organizacja. Wszystkie widoki w obrębie organizacji z kontekstu (nigdy z parametru).
+
+### Quick Actions
+Menu ⋯ (partial `ac-action-menu`) pokazuje tylko akcje dostępne w danym stanie i roli. Wywołuje istniejące endpointy i metody `$store.ubr`:
+- otwórz kartę / Lead Intelligence,
+- oceń stronę (podgląd),
+- znajdź decydentów,
+- zweryfikuj,
+- analizuj,
+- dodaj do Prospects,
+- oznacz follow-up jako wykonany,
+- notatka / follow-up / zmiana statusu (istniejące formularze w karcie firmy → Sprzedaż),
+- odłóż (1 / 3 / 7 / 14 dni) / przywróć.
+
+Bez wysyłania wiadomości i bez eksportu do ClickUp.
+
+### Odłożenie działania (M008, `ubr_action_snoozes`)
+- `POST` / `DELETE /action-center/snoozes`, uprawnienie `pipeline.manage`, nonce REST.
+- Firma musi należeć do puli organizacji (IDOR → 404).
+- Termin to koniec dnia za N dni (strefa WP). UNIQUE (organizacja, firma, typ), więc ponowne odłożenie aktualizuje termin.
+- Follow-upów nie odkłada się — przekłada się ich termin.
+
+### Manual Website Review (M009)
+- `GET` / `POST /companies/{id}/manual-review`. Odczyt wymaga `companies.view`, zapis `pipeline.manage`. Firma musi być w puli (IDOR → 404).
+- Statusy: NOT_REVIEWED / GOOD / AVERAGE / POOR / VERY_POOR. Notatka bez HTML, do 1000 znaków.
+- Bieżąca ocena w `ubr_manual_reviews` (UNIQUE organizacja + firma) i pełna historia w `ubr_manual_review_history` (kto, kiedy, poprzednia → nowa, notatka).
+- Prywatna dla organizacji.
+- Subiektywna: nie wywołuje `ubr/company/changed`, nie zmienia Opportunity Score, Lead Potential, Redesign ani rekomendacji. Listy pokazują ją zdaniem („Strona została oceniona ręcznie jako bardzo słaba.”) i pozwalają filtrować.
+- UI: wspólny partial `manual-review` w karcie firmy (Website Analysis) i w podglądzie strony (oba tryby).
+
+### REST
+- `GET /action-center?owner=` — overview: KPI, listy z licznikami, 5 priorytetów, follow-upy, aktywność, coverage, opcje filtrów.
+- `GET /action-center/priorities?page=&per_page=`
+- `GET /action-center/queues/{key}?…`
+- Odczyt: `companies.view`. Follow-upy dodatkowo wymagają `pipeline.view`.
+
+### Wydajność i cache
+- Jedno zapytanie agregujące (SUM po warunkach) dla wszystkich liczników.
+- Listy z LIMIT/OFFSET i JOIN-ami po kluczach unikalnych. Uzasadnienia (`JSON_EXTRACT` z oceny) tylko dla wierszy strony.
+- Bez N+1: użytkownicy przez cache `get_userdata`.
+- Nowe indeksy tylko w nowych tabelach.
+- Liczniki w transiencie (60 s) z kluczem wersjonowanym:
+  - wersja globalna rośnie przy `ubr/company/changed` dla danych wspólnych,
+  - wersja organizacji rośnie przy zmianach pipeline i follow-upów (`PipelineService::forgetStats`), zapisie oceny Lead Intelligence, odłożeniu i ocenie ręcznej.
+- Dashboard nie czeka na Apollo, crawler, screenshoty ani ClickUp.
+- Lokalnie (LocalWP, około 65 ocenionych firm): `GET /action-center` około 110 ms.
+- Test syntetyczny na 10 000 ocenionych firm (kontener MariaDB, dane tymczasowe usunięte po teście): wszystkie liczniki 102 ms, priorytety 5 (strona 1 i 200) około 120 ms, Top Opportunities 10 — 73 ms, Needs Attention z filtrem regionu 96 ms, wyszukiwanie 28 ms, coverage 39 ms.
+
+### Ograniczenia
+- Rekomendacje są tak dobre jak Lead Intelligence (brak AI Vision → dużo Review website i Missing analysis).
+- Firmy nieocenione nie trafiają do list do czasu przeliczenia w tle.
+- Brak historycznych trendów KPI.
+- Odłożenie działa per typ działania. Gdy rekomendacja firmy się zmieni, nowe działanie nie jest odłożone.
+
+## 16. Audyt QA i stabilizacja (Prompt 7)
+
+Bez nowych modułów i bez migracji (schemat v9). Pełna lista błędów i wyników: `docs/QA-REPORT.md`.
+
+### Ochrona SSRF (PHP i przeglądarka)
+- `UrlGuard::isPublicIp()` i `capture.mjs isPublicIp()` oceniają adresy IPv6 na bajtach: IPv4-mapped (`::ffff:0:0/96` w każdym zapisie), IPv4-compatible (`::/96`), NAT64 (`64:ff9b::/96`), 6to4 (`2002::/16`) → decyduje osadzony IPv4; blokowane ULA, link-local, site-local, multicast, Teredo, dokumentacja.
+- `UrlGuard::check()` zwraca sprawdzone adresy (`ips`); `PageFetcher::pin()` przypina połączenie cURL (`CURLOPT_RESOLVE`) na czas jednego żądania — ochrona przed DNS rebinding.
+- `PageFetcher`, `WebsiteInspector` (weryfikacja firmy) i `WebsiteChecker` obsługują przekierowania ręcznie, każdy krok przez `UrlGuard` + przypięcie IP.
+- Renderer (`tools/site-capture/capture.mjs`): `page.route()` dla HTTP(S), `context.routeWebSocket()` zamyka wszystkie WebSockety, WebRTC bez UDP poza proxy. Import modułu (testy) nie uruchamia przechwytywania. Ryzyko szczątkowe: Chromium sam rozwiązuje DNS (rebinding w przeglądarce) — sprawdzenie każdego żądania ogranicza je, ale nie eliminuje.
+- Timeout analizy: `SIGTERM` (Playwright zamyka Chromium), po 3 s `SIGKILL`.
+
+### Linki zewnętrzne (XSS)
+`UrlGuard::httpUrl()` (serwer: profile osób, źródła kontaktów, linki ClickUp) i `$store.ubr.safeHref()` (front, wszystkie zewnętrzne `:href`) — tylko http/https z hostem; inaczej brak atrybutu `href`. Profil osoby z JSON-LD tylko z pełnego wzorca adresu profilu.
+
+### Kolejki i blokady
+- `App\Ubr\Support\Lock` — `GET_LOCK` / `RELEASE_LOCK` z nazwą prefiksowaną bazą i prefiksem tabel; atomowe i zwalniane automatycznie po zakończeniu połączenia (śmierć procesu). Używane przez sloty analizy i decydentów, ClickUp, Lead Intelligence i migrator. Weryfikacja zachowuje własną blokadę CAS.
+- `failExhausted(max)` w repozytoriach analiz, researchu, weryfikacji i ClickUp: pozycje `running` z wygasłą blokadą i wyczerpanymi próbami → `failed` (wywoływane przez runner przed `claim()`); analiza/research synchronizują stan firmy.
+- ClickUp `create`: eksport w stanie `running` na początku próby = poprzedni worker przerwany po/w trakcie POST → UNKNOWN (rekoncyliacja w karcie firmy), bez ponownego POST.
+- Lead Intelligence: nieudane przeliczenie przesuwa ocenę na koniec kolejki (`deferFailed`); raz na dobę oceny starsze niż 7 dni oznaczane do przeliczenia (`markAged`, przyczyna `aging`); szybki licznik kolejki (`countPending`, LIMIT + NOT EXISTS).
+- `AsyncWorker::dispatchJob()` przy żądaniach WWW deduplikuje zlecenia (typ + ID) i wysyła je po wysłaniu odpowiedzi (`fastcgi_finish_request` / `litespeed_finish_request`; filtr `ubr/queue/defer_dispatch`). W WP-CLI i bez tych funkcji — wysyłka od razu.
+- `VerificationRunner::kick()` planuje zapasowe zdarzenie WP-Cron. `wp ubr queue-work --all` wykonuje krok każdej kolejki bez loopbacku.
+- Publiczny ping workera (`wp_ajax_nopriv_ubr_worker_ping`) tylko odpowiada — bez zapisów.
+
+### Migracje
+`Migrator::migrate()`: blokada `GET_LOCK`, wersja czytana z bazy po uzyskaniu blokady, błąd zapisywany w `ubr_migration_error` (komunikat w panelu WP, `wp ubr migrate --status`). `Bootstrapper::maybeRun()` na `init`: pomija żądania, gdy `UBR_AUTO_MIGRATE=false`, w WP-CLI (migracje tylko przez `wp ubr migrate` / `install`) i przez 10 min po błędzie. `RestRegistrar::authorize()` zamienia każdy wyjątek na kontrolowany 500.
+
+### Spójność danych
+- Action Center: „przeanalizowana” = `companies.analyzed_at IS NOT NULL` (zakończona analiza) lub status `completed/partial` — ponowna/nieudana analiza nie cofa firmy (PHP `classify()` i SQL `sqlType()` / `QueueCatalog::where()` / coverage zgodne).
+- Archiwizacja prospektu jedną ścieżką (`PipelineService::archive`, także `DELETE /prospects/{id}`): zdarzenie, liczniki, Lead Intelligence. Zmiana kwalifikacji przelicza Lead Intelligence bez wyzwalania reguł ClickUp.
+- Usunięcie członka organizacji: jego prospekty i follow-upy → „Unassigned”, jego reguły ClickUp wyłączone.
+- KPI Total Prospects respektuje My Work / Unassigned; drill-down z kafelka KPI bez filtrów listy.
+- Formularze: `isoFromLocalInput()` wysyła `datetime-local` jako ISO z offsetem przeglądarki (serwer: `PipelineService::parseDate`).
+- Adresy ogólne/działów (`PeopleExtractor::GENERIC_LOCALS`, `isGenericEmail`) nie są e-mailami osób; dopasowanie nazwiska jako podciągu od 3 liter.
+- NIP/REGON z powtórzeń jednej cyfry / samych zer odrzucane przez `CompanyNormalizer`.

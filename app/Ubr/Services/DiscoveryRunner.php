@@ -120,10 +120,16 @@ class DiscoveryRunner
 			]);
 		} catch (Throwable $e) {
 			$attempts = ((int) $search['attempts']) + 1;
-			$this->events->log($searchId, 'error', 'Nieoczekiwany błąd: ' . $e->getMessage());
+			// Treść błędu bazy / PHP (nazwy tabel, „Duplicate entry…”) tylko do logu serwera — użytkownik widzi
+			// komunikat ogólny. Komunikaty przeznaczone dla użytkownika (UbrException, ProviderException) zostają.
+			$public = $e instanceof \App\Ubr\Support\UbrException || $e instanceof \App\Ubr\Domain\Discovery\ProviderException
+				? $e->getMessage()
+				: 'błąd wewnętrzny (szczegóły w logu serwera)';
+			\App\Ubr\Support\Redactor::log('Discovery #' . $searchId . ': ' . get_class($e) . ': ' . $e->getMessage());
+			$this->events->log($searchId, 'error', 'Nieoczekiwany błąd: ' . $public);
 
 			if ($attempts >= self::MAX_PROVIDER_ATTEMPTS) {
-				$this->finish($searchId, 'failed', $e->getMessage(), $search['state'] ?: []);
+				$this->finish($searchId, 'failed', $public, $search['state'] ?: []);
 
 				return 'failed';
 			}

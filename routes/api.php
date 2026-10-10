@@ -12,9 +12,11 @@ use App\Ubr\Http\Controllers\AnalysisController;
 use App\Ubr\Http\Controllers\ClickUpController;
 use App\Ubr\Http\Controllers\CompanyController;
 use App\Ubr\Http\Controllers\ContactController;
+use App\Ubr\Http\Controllers\ActionCenterController;
 use App\Ubr\Http\Controllers\DashboardController;
 use App\Ubr\Http\Controllers\DiscoveryController;
 use App\Ubr\Http\Controllers\IntegrationController;
+use App\Ubr\Http\Controllers\LeadIntelligenceController;
 use App\Ubr\Http\Controllers\MeController;
 use App\Ubr\Http\Controllers\OrganizationController;
 use App\Ubr\Http\Controllers\PipelineController;
@@ -26,6 +28,13 @@ return [
 	['POST', '/me/profile', [MeController::class, 'updateProfile'], 'auth'],
 
 	['GET', '/dashboard', [DashboardController::class, 'show'], 'organization.view'],
+	['GET', '/action-center', [ActionCenterController::class, 'overview'], 'companies.view'],
+	['GET', '/action-center/priorities', [ActionCenterController::class, 'priorities'], 'companies.view'],
+	['GET', '/action-center/queues/(?P<key>[a-z_]+)', [ActionCenterController::class, 'queue'], 'companies.view'],
+	['POST', '/action-center/snoozes', [ActionCenterController::class, 'snooze'], 'pipeline.manage'],
+	['DELETE', '/action-center/snoozes', [ActionCenterController::class, 'unsnooze'], 'pipeline.manage'],
+	['GET', '/companies/(?P<id>\d+)/manual-review', [ActionCenterController::class, 'manualReview'], 'companies.view'],
+	['POST', '/companies/(?P<id>\d+)/manual-review', [ActionCenterController::class, 'saveManualReview'], 'pipeline.manage'],
 
 	['GET', '/discovery/options', [DiscoveryController::class, 'options'], 'discovery.view'],
 	['GET', '/discovery/searches', [DiscoveryController::class, 'index'], 'discovery.view'],
@@ -68,6 +77,10 @@ return [
 	['POST', '/prospects/(?P<id>\d+)/activities', [PipelineController::class, 'addActivity'], 'pipeline.manage'],
 	['POST', '/prospects/(?P<id>\d+)/followups', [PipelineController::class, 'addFollowup'], 'pipeline.manage'],
 	['POST', '/followups/(?P<id>\d+)', [PipelineController::class, 'updateFollowup'], 'pipeline.manage'],
+
+	['GET', '/companies/(?P<id>\d+)/lead-intelligence', [LeadIntelligenceController::class, 'show'], 'companies.view'],
+	['POST', '/companies/(?P<id>\d+)/lead-intelligence/recalculate', [LeadIntelligenceController::class, 'recalculate'], 'companies.view'],
+	['GET', '/lead-intelligence/top', [LeadIntelligenceController::class, 'top'], 'companies.view'],
 
 	['GET', '/clickup/status', [ClickUpController::class, 'status'], 'clickup.connect'],
 	['POST', '/clickup/oauth/start', [ClickUpController::class, 'start'], 'clickup.connect'],

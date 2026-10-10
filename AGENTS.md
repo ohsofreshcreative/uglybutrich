@@ -95,8 +95,47 @@ Reguły bezpieczeństwa (obowiązkowe):
   odrzucone / wykluczone / nieaktualne, screenshoty; niezweryfikowane osoby są tak oznaczone. Reguły automatyczne: DOMYŚLNIE
   WYŁĄCZONE, wykonywane połączeniem autora, tylko nowe zdarzenia (`ubr/company/changed`), backfill tylko po osobnym potwierdzeniu,
   limity dzienne, bez uruchamiania analiz. Testy ClickUp = mocki; nie twórz prawdziwych zadań bez wyraźnej zgody właściciela.
-- UWAGA BEZPIECZEŃSTWO: w repozytorium jest śledzony plik prywatnego klucza SSH `key` (+ `key.pub`, commit `9b24093`) — nie czytać,
-  nie używać, nie kopiować, nie dodawać do paczek wdrożeniowych. Plan rotacji i usunięcia z historii: `docs/SECURITY-KEY.md`
+- Lead Intelligence (Prompt 5, `app/Ubr/Domain/Lead`, `LeadIntelligenceService`, `LeadIntelligenceRunner`): liczy WYŁĄCZNIE zapisane
+  dane — nigdy nie uruchamia analiz, crawlera, Decision Maker Findera ani płatnych API; nie zmienia Relevance / Opportunity / Contact
+  Priority ani pipeline (rekomendacja = sugestia). Nie używaj łącznego Opportunity Score (zawiera potencjał biznesowy i wiarygodność —
+  podwójne liczenie); tylko kryteria strony/techniki bez AI (wysoki = słabsza strona). Brak danych = niezmierzone, nigdy 0 i nigdy
+  fikcyjna wartość; Data Coverage i Confidence osobno od wyniku. Każdy insight musi mieć dowód z findingu analizy; bez dowodu — brak
+  wniosku i brak argumentu sprzedażowego; bez twierdzeń o wyglądzie (AI Vision wyłączone) i o „utracie klientów”. Ocena per organizacja
+  (`ubr_lead_intelligence`); insights per firma. Zmiana logiki = podbij `LeadPotentialCalculator::VERSION` / `WebsiteInsightGenerator::VERSION`
+  / `LeadIntelligenceService::VERSION` (oceny przeliczą się w tle). Nowe źródło zmiany danych firmy = `do_action('ubr/company/changed', $id, $reason, $orgId)`.
+- Discover UI / podgląd strony (Prompt 5.1, ARCHITECTURE §14): menu akcji wiersza tylko przez wspólny partial `row-actions` (Discover,
+  Prospects) i wspólny modal `preview-modal` (`$store.ubr.openPreview`) — nie twórz kopii. Tabela Discover bez przewijania w poziomie:
+  `table-fixed` + procentowy `colgroup`, nie dodawaj `min-width` ani `overflow-x-hidden`; dodatkowe dane wiersza → rozwijane
+  szczegóły lub menu, nie nowa kolumna. Iframe podglądu: tylko adres po `safeWebsiteUrl()` (http/https), bez proxy, bez obchodzenia
+  X-Frame-Options / CSP, bez `allow-top-navigation` i bez dostępu do kamery / mikrofonu / lokalizacji; nie opieraj stanu na
+  `iframe.onload`. Podgląd nie może uruchamiać analizy, crawlera ani płatnych API (screenshoty tylko z istniejących analiz). Testy: `tests/discover-ui.php`
+  (w `tests/run.php`) + `node tests/js/preview-url.test.mjs`.
+- Prospecting Dashboard & Action Center (Prompt 6, ARCHITECTURE §15): Dashboard tylko CZYTA zapisane dane — nigdy nie uruchamia
+  analiz, Apollo, Decision Maker Findera ani ClickUp. Action Priority (co zrobić teraz) jest ODRĘBNY od Lead Potential: kategorie w stałej
+  kolejności + stabilne remisy, bez nowego wyniku liczbowego; regułę zmieniaj jednocześnie w `ActionPriorityEngine::classify()` i
+  `sqlType()` (test porównuje obie). Zaległe follow-upy zawsze pierwsze; bez analizy nigdy CONTACT_READY; brak decydenta ≠ niski potencjał.
+  Listy = filtry tej samej puli organizacji (wyniki wyszukiwań + aktywni prospekci) — nie dodawaj globalnej bazy firm. Nowe definicje
+  list / KPI tylko w `QueueCatalog`. Agregaty w SQL; po zmianie danych istotnych dla dashboardu wywołaj
+  `ActionCenterService::bumpOrganization($orgId)` (dane prywatne) lub polegaj na `ubr/company/changed` (dane wspólne).
+  Manual Website Review jest subiektywne i prywatne: NIE może zmieniać scoringów ani wywoływać `ubr/company/changed`; historia bez
+  nadpisywania. Następna migracja: M010 (wdrożone M001–M009). Instrukcja wdrożenia: `docs/DEPLOYMENT.md`.
+- Audyt QA (Prompt 7, `docs/QA-REPORT.md`, ARCHITECTURE §16) — zasady obowiązujące dalej:
+  * Każde pobranie adresu zewnętrznego (PHP) przez `UrlGuard` krok po kroku przy przekierowaniach i z przypięciem IP
+    (`PageFetcher::pin()`); nigdy `wp_safe_remote_get` / `wp_remote_get` z `redirection > 0` dla adresów ze stron firm. Adresy IP
+    oceniaj na bajtach (`UrlGuard::isPublicIp`, `capture.mjs isPublicIp`), nie regexem na tekście.
+  * Zewnętrzne linki w widokach tylko przez `$store.ubr.safeHref()` (front) i `UrlGuard::httpUrl()` (prezentacja / zapis) —
+    javascript:/data: nie mogą trafić do `href`. Profil osoby tylko z pełnego wzorca adresu profilu.
+  * Adres ogólny / działu (`PeopleExtractor::isGenericEmail`) nigdy nie jest e-mailem osoby (ekstraktor i dodawanie ręczne).
+  * Blokady procesów: `App\Ubr\Support\Lock` (MySQL `GET_LOCK`), nie opcje WP. Nowa kolejka: `failExhausted()` przed `claim()`
+    (przerwane procesy → failed), operacje nieidempotentne na API zewnętrznym → przy stanie „running” na starcie: UNKNOWN, bez ponowienia.
+  * Zlecenia workerów: `AsyncWorker::dispatchJob()` (deduplikacja, wysyłka po odpowiedzi). Nie wywołuj blokujących żądań HTTP do siebie.
+  * Migracje: produkcja `UBR_AUTO_MIGRATE=false` + `wp ubr migrate`; w WP-CLI migracje wyłącznie przez `wp ubr migrate` / `install`.
+  * „Przeanalizowana” = istnieje zakończona analiza (`companies.analyzed_at`), nie status ostatniego zlecenia.
+  * Daty z `<input type="datetime-local">` wysyłaj jako ISO z offsetem (`isoFromLocalInput`), nigdy „gołą” wartość.
+  * Komunikaty błędów dla użytkownika bez treści wyjątków bazy/PHP (szczegóły do `Redactor::log`).
+  * Testy regresji audytu: `tests/qa-p7.php`, `node tests/js/ssrf-ip.test.mjs`, `node tests/js/datetime.test.mjs`.
+- UWAGA BEZPIECZEŃSTWO: prywatny klucz SSH `key` (+ `key.pub`) był śledzony w repozytorium (commit `9b24093`); 10.10.2026 usunięty z drzewa
+  (`git rm`, bez commita) — nadal jest w historii, wymaga unieważnienia. Nie czytać, nie używać, nie przywracać, nie dodawać do paczek. Plan rotacji i usunięcia z historii: `docs/SECURITY-KEY.md`
   (przepisanie historii Git tylko za zgodą właściciela). Nowe sekrety (ClickUp, klucz szyfrowania) wyłącznie w `wp-config.php`.
 
 HOW TO CONNECT CLICKUP
@@ -127,12 +166,14 @@ Integracja jest wdrożona, ale działa dopiero po skonfigurowaniu aplikacji OAut
    tokenu — dostęp aplikacji można dodatkowo odebrać w ustawieniach ClickUp.
 
 Baza danych: tabele `{prefix}ubr_*`, migracje w `app/Ubr/Infrastructure/Database/Migrations` (wersja w opcji `ubr_db_version`).
-Nową zmianę schematu dodawaj jako NOWĄ migrację (M007…; wdrożone: M001–M006), idempotentną, bez kasowania danych. Nie zmieniaj wdrożonych migracji.
+Nową zmianę schematu dodawaj jako NOWĄ migrację (M010…; wdrożone: M001–M009), idempotentną, bez kasowania danych. Nie zmieniaj wdrożonych migracji.
 
 Komendy aplikacji (WP-CLI, z socketem Local — patrz niżej „Komendy”):
 
 ```bash
 wp ubr install                     # migracje + organizacja OhSoFresh (idempotentnie)
+wp ubr migrate [--status]          # migracje podczas wdrożenia (kod wyjścia ≠ 0 przy błędzie); --status bez zmian
+wp ubr queue-work --all            # krok wszystkich kolejek (cron systemowy, gdy loopback HTTP jest zablokowany)
 wp ubr status                      # schemat, tabele, kolejka, źródła danych
 wp ubr test                        # testy automatyczne (sprzątają po sobie)
 wp ubr discover --org=ohsofresh --industry=steel_structures --region=mazowieckie --providers=wikidata,osm --limit=25 --sync

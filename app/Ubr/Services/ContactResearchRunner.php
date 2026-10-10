@@ -2,6 +2,7 @@
 
 namespace App\Ubr\Services;
 
+use App\Ubr\Support\Lock;
 use App\Ubr\Infrastructure\Database\Db;
 use App\Ubr\Infrastructure\Queue\AsyncWorker;
 use App\Ubr\Infrastructure\Repositories\ContactRunRepository;
@@ -44,6 +45,11 @@ class ContactResearchRunner
 		$processed = 0;
 
 		try {
+			foreach ($this->runs->failExhausted(ContactLimits::limits()['max_attempts'] + 1) as $dead) {
+				$this->runs->update((int) $dead['id'], ['finished_at' => Db::now(), 'errors' => [['stage' => 'internal', 'message' => 'Wyszukiwanie przerwane — proces workera został zakończony po kilku próbach.']]]);
+				app(\App\Ubr\Infrastructure\Repositories\CompanyRepository::class)->update((int) $dead['company_id'], ['contacts_status' => 'failed']);
+			}
+
 			$item = $this->runs->claim(ContactLimits::limits()['time_budget_seconds'] + 120);
 
 			if ($item) {
@@ -67,7 +73,7 @@ class ContactResearchRunner
 				}
 			}
 		} finally {
-			delete_option(self::LOCK_PREFIX . $slot);
+			Lock::release(self::LOCK_PREFIX . $slot);
 		}
 
 		$due = $this->runs->countDue();
@@ -97,23 +103,10 @@ class ContactResearchRunner
 	 */
 	private function acquireSlot(): ?int
 	{
-		$seconds = ContactLimits::limits()['time_budget_seconds'] + 150;
-
+		// Blokada MySQL (GET_LOCK) — atomowa, zwalniana automatycznie po śmierci procesu.
 		for ($slot = 1; $slot <= ContactLimits::limits()['concurrency']; $slot++) {
-			$name = self::LOCK_PREFIX . $slot;
-
-			if (add_option($name, time() + $seconds, '', false)) {
+			if (Lock::acquire(self::LOCK_PREFIX . $slot)) {
 				return $slot;
-			}
-
-			wp_cache_delete($name, 'options');
-
-			if ((int) get_option($name, 0) < time()) {
-				delete_option($name);
-
-				if (add_option($name, time() + $seconds, '', false)) {
-					return $slot;
-				}
 			}
 		}
 

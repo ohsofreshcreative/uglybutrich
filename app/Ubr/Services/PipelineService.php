@@ -195,6 +195,9 @@ class PipelineService
 
 			if (isset($changes['status']) || isset($changes['priority'])) {
 				do_action('ubr/company/changed', (int) $p['company_id'], 'pipeline_changed', $ctx->organizationId);
+			} elseif (array_key_exists('qualification', $changes)) {
+				// „Not a fit” to hard blocker Lead Intelligence — ocena musi się przeliczyć (bez wyzwalania reguł ClickUp).
+				$this->refreshLead((int) $p['company_id'], $ctx->organizationId);
 			}
 		}
 
@@ -215,6 +218,7 @@ class PipelineService
 		}
 
 		$this->forgetStats($ctx->organizationId);
+		$this->refreshLead((int) $p['company_id'], $ctx->organizationId); // pula firm organizacji się zmieniła
 
 		return $this->sales($ctx, (int) $p['company_id']);
 	}
@@ -496,7 +500,7 @@ class PipelineService
 	 * @param array<string, mixed> $e
 	 * @return array<string, mixed>
 	 */
-	private function presentEvent(array $e): array
+	public function presentEvent(array $e): array
 	{
 		$label = fn ($type, $v) => match ($type) {
 			'status' => PipelineCatalog::statusLabel($v),
@@ -606,9 +610,19 @@ class PipelineService
 		$this->forgetStats($ctx->organizationId);
 	}
 
+	/**
+	 * Przeliczenie Lead Intelligence po zmianie, która nie jest wyzwalaczem reguł ClickUp (kwalifikacja, archiwizacja).
+	 */
+	public function refreshLead(int $companyId, int $organizationId): void
+	{
+		app(LeadIntelligenceService::class)->invalidate($companyId, 'pipeline_changed', $organizationId);
+		app(LeadIntelligenceRunner::class)->kick();
+	}
+
 	public function forgetStats(int $organizationId): void
 	{
 		delete_transient('ubr_pipeline_stats_' . $organizationId);
+		ActionCenterService::bumpOrganization($organizationId); // Action Center: nowe liczniki po zmianie pipeline / follow-upów
 	}
 
 	/**

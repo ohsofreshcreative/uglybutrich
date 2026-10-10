@@ -215,7 +215,7 @@
 									<div class="rounded-lg bg-canvas px-3 py-2 space-y-1">
 										<div class="flex flex-wrap items-center gap-2">
 											<span :class="$store.ubr.exportBadge(cu.current.status)" x-text="cu.current.status === 'success' ? 'Already exported' : cu.current.status_label"></span>
-											<a x-show="cu.current.task_url" :href="cu.current.task_url" target="_blank" rel="noopener" class="inline-flex items-center gap-1 font-semibold underline">Open in ClickUp @include('ubr.partials.icon', ['name' => 'external', 'class' => 'size-3'])</a>
+											<a x-show="cu.current.task_url" :href="$store.ubr.safeHref(cu.current.task_url)" target="_blank" rel="noopener" class="inline-flex items-center gap-1 font-semibold underline">Open in ClickUp @include('ubr.partials.icon', ['name' => 'external', 'class' => 'size-3'])</a>
 										</div>
 										<div class="text-[12px] text-ink-muted">Ostatni eksport: <span x-text="$store.ubr.date(cu.current.exported_at)"></span> · Ostatnia synchronizacja: <span x-text="$store.ubr.date(cu.current.last_synced_at)"></span></div>
 										<div class="text-[12px] text-danger" x-show="cu.current.error" x-text="cu.current.error"></div>
@@ -260,7 +260,7 @@
 							<div>
 								<div class="text-[11px] font-bold uppercase tracking-wider text-ink-muted mb-1">Zadania na innych listach / warianty</div>
 								<template x-for="e in cu.exports.filter(e => !cu.current || e.id !== cu.current.id)" :key="e.id">
-									<div class="text-[12px] flex flex-wrap gap-2 items-center"><span :class="$store.ubr.exportBadge(e.status)" x-text="e.status_label"></span><span x-text="e.list_name || e.list_id"></span><a x-show="e.task_url" :href="e.task_url" target="_blank" rel="noopener" class="underline">otwórz</a></div>
+									<div class="text-[12px] flex flex-wrap gap-2 items-center"><span :class="$store.ubr.exportBadge(e.status)" x-text="e.status_label"></span><span x-text="e.list_name || e.list_id"></span><a x-show="e.task_url" :href="$store.ubr.safeHref(e.task_url)" target="_blank" rel="noopener" class="underline">otwórz</a></div>
 								</template>
 							</div>
 						</template>

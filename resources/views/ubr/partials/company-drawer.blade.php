@@ -2,7 +2,7 @@
 <div x-show="$store.ubr.drawer.open" x-cloak class="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Szczegóły firmy">
 	<div class="absolute inset-0 bg-ink/30" @click="$store.ubr.closeDrawer()" x-show="$store.ubr.drawer.open" x-transition.opacity></div>
 
-	<section class="absolute inset-y-0 right-0 w-full bg-white shadow-[var(--shadow-pop)] flex flex-col transition-[max-width] duration-200" :class="['analysis', 'contacts', 'sales'].includes($store.ubr.drawer.tab) ? 'max-w-[860px]' : 'max-w-[560px]'"
+	<section class="absolute inset-y-0 right-0 w-full bg-white shadow-[var(--shadow-pop)] flex flex-col transition-[max-width] duration-200" :class="['analysis', 'contacts', 'sales', 'lead'].includes($store.ubr.drawer.tab) ? 'max-w-[860px]' : 'max-w-[560px]'"
 		x-show="$store.ubr.drawer.open"
 		x-transition:enter="transition duration-200 ease-out" x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
 		x-transition:leave="transition duration-150 ease-in" x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full">
@@ -27,9 +27,9 @@
 			</button>
 		</header>
 
-		<nav class="flex gap-1 px-6 border-b border-line" role="tablist" aria-label="Sekcje karty firmy" x-show="!$store.ubr.drawer.loading && $store.ubr.drawer.company">
-			<template x-for="t in [{k: 'company', l: 'Firma'}, {k: 'sales', l: 'Sprzedaż'}, {k: 'contacts', l: 'Decision Makers'}, {k: 'analysis', l: 'Website Analysis'}]" :key="t.k">
-				<button type="button" role="tab" class="px-3 h-10 -mb-px border-b-2 text-[13px] font-semibold" :aria-selected="$store.ubr.drawer.tab === t.k"
+		<nav class="flex gap-1 px-6 border-b border-line overflow-x-auto" role="tablist" aria-label="Sekcje karty firmy" x-show="!$store.ubr.drawer.loading && $store.ubr.drawer.company">
+			<template x-for="t in [{k: 'company', l: 'Firma'}, {k: 'lead', l: 'Lead Intelligence'}, {k: 'sales', l: 'Sprzedaż'}, {k: 'contacts', l: 'Decision Makers'}, {k: 'analysis', l: 'Website Analysis'}]" :key="t.k">
+				<button type="button" role="tab" class="px-3 h-10 -mb-px border-b-2 text-[13px] font-semibold whitespace-nowrap shrink-0" :aria-selected="$store.ubr.drawer.tab === t.k"
 					:class="$store.ubr.drawer.tab === t.k ? 'border-ink text-ink' : 'border-transparent text-ink-muted hover:text-ink'" @click="$store.ubr.setTab(t.k)" x-text="t.l"></button>
 			</template>
 		</nav>
@@ -41,6 +41,10 @@
 
 			<template x-if="$store.ubr.drawer.loading">
 				<div class="space-y-3"><div class="ubr-skeleton h-20"></div><div class="ubr-skeleton h-32"></div></div>
+			</template>
+
+			<template x-if="!$store.ubr.drawer.loading && $store.ubr.drawer.company && $store.ubr.drawer.tab === 'lead'">
+				@include('ubr.partials.lead-tab')
 			</template>
 
 			<template x-if="!$store.ubr.drawer.loading && $store.ubr.drawer.company && $store.ubr.drawer.tab === 'sales'">
@@ -92,7 +96,7 @@
 							<dt class="text-ink-muted text-[12px]">Strona WWW</dt>
 							<dd>
 								<template x-if="c.domain">
-									<a :href="c.website_url" target="_blank" rel="noopener nofollow" class="inline-flex items-center gap-1.5 font-bold hover:underline">
+									<a :href="$store.ubr.safeHref(c.website_url)" target="_blank" rel="noopener nofollow" class="inline-flex items-center gap-1.5 font-bold hover:underline">
 										<span x-text="c.domain"></span>
 										@include('ubr.partials.icon', ['name' => 'external', 'class' => 'size-3.5 text-ink-muted'])
 									</a>
@@ -140,7 +144,7 @@
 								<strong x-text="({krs: 'KRS', vat: 'Biała lista VAT', ceidg: 'CEIDG', gus: 'GUS / REGON'})[rec.source] || rec.source"></strong>:
 								<span x-text="rec.name"></span>
 								<span class="text-ink-muted" x-text="rec.status_detail ? ' — ' + rec.status_detail : ''"></span>
-								<a x-show="rec.source_url" :href="rec.source_url" target="_blank" rel="noopener" class="underline font-semibold ml-1">rejestr</a>
+								<a x-show="rec.source_url" :href="$store.ubr.safeHref(rec.source_url)" target="_blank" rel="noopener" class="underline font-semibold ml-1">rejestr</a>
 							</div>
 						</template>
 					</div>
@@ -193,7 +197,7 @@
 							<template x-for="s in c.sources" :key="s.provider + s.external_id">
 								<li class="flex items-center justify-between gap-2 text-[13px] rounded-lg bg-canvas px-3 py-2">
 									<span><strong x-text="s.provider_label"></strong> <span class="text-ink-muted" x-text="s.external_id"></span></span>
-									<a x-show="s.url" :href="s.url" target="_blank" rel="noopener" class="text-[12px] font-semibold underline">Zobacz</a>
+									<a x-show="s.url" :href="$store.ubr.safeHref(s.url)" target="_blank" rel="noopener" class="text-[12px] font-semibold underline">Zobacz</a>
 								</li>
 							</template>
 						</ul>
@@ -225,7 +229,7 @@
 			</template>
 		</div>
 
-		<footer class="px-6 py-4 border-t border-line flex items-center gap-2" x-show="!$store.ubr.drawer.loading && $store.ubr.drawer.company">
+		<footer class="px-4 sm:px-6 py-4 border-t border-line flex flex-wrap items-center gap-2" x-show="!$store.ubr.drawer.loading && $store.ubr.drawer.company">
 			<template x-if="$store.ubr.drawer.company && !$store.ubr.drawer.company.prospect_id">
 				<button type="button" class="ubr-btn-gold" @click="$store.ubr.saveProspect($store.ubr.drawer.company)" :disabled="$store.ubr.drawer.saving">
 					@include('ubr.partials.icon', ['name' => 'bookmark'])

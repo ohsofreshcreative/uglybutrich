@@ -158,7 +158,7 @@ class SiteCapture
 	private function exec(array $command, int $timeoutSeconds): array
 	{
 		$env = array_filter([
-			'PATH' => '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin',
+			'PATH' => '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin' . (getenv('PATH') ? ':' . getenv('PATH') : ''),
 			'HOME' => getenv('HOME') ?: sys_get_temp_dir(),
 			'UBR_CHROME_PATH' => $this->chromePath(),
 			'PLAYWRIGHT_BROWSERS_PATH' => getenv('PLAYWRIGHT_BROWSERS_PATH') ?: null,
@@ -189,7 +189,18 @@ class SiteCapture
 
 			if (microtime(true) > $deadline) {
 				$timedOut = true;
-				proc_terminate($process, 9);
+				// Najpierw SIGTERM — Playwright zamyka wtedy uruchomione procesy Chromium; SIGKILL od razu zostawiał
+				// osierocone przeglądarki (wyciek pamięci na hostingu). SIGKILL dopiero, gdy proces nie zakończy się w 3 s.
+				proc_terminate($process, 15);
+
+				for ($i = 0; $i < 30 && (proc_get_status($process)['running'] ?? false); $i++) {
+					usleep(100000);
+				}
+
+				if (proc_get_status($process)['running'] ?? false) {
+					proc_terminate($process, 9);
+				}
+
 				break;
 			}
 

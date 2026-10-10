@@ -178,6 +178,9 @@ class ResultRepository
 		// Filtry Decision Maker Findera.
 		$where .= ContactFilters::where($extra, $args);
 
+		// Filtry Lead Intelligence (ocena organizacji; LEFT JOIN — firmy bez oceny nie znikają, gdy filtr nie jest ustawiony).
+		$where .= LeadFilters::where($extra, $args);
+
 		$where .= match ($filter) {
 			'with_domain' => ' AND c.domain IS NOT NULL',
 			'relevant' => ' AND r.relevance_score >= 60',
@@ -198,12 +201,13 @@ class ResultRepository
 
 		$from = "{$this->db->table(Tables::RESULTS)} r
 			INNER JOIN {$this->db->table(Tables::COMPANIES)} c ON c.id = r.company_id
-			LEFT JOIN {$this->db->table(Tables::PROSPECTS)} p ON p.company_id = r.company_id AND p.organization_id = r.organization_id";
+			LEFT JOIN {$this->db->table(Tables::PROSPECTS)} p ON p.company_id = r.company_id AND p.organization_id = r.organization_id"
+			. LeadFilters::join('r.company_id', 'r.organization_id', $this->db->table(Tables::LEAD_INTELLIGENCE));
 
 		$total = (int) $this->db->value("SELECT COUNT(*) FROM {$from} WHERE {$where}", ...$args);
 
 		$items = $this->db->rows(
-			"SELECT c.*, r.provider, r.matched_terms, r.relevance_score, r.relevance, r.location_match, p.id AS prospect_id
+			"SELECT c.*, r.provider, r.matched_terms, r.relevance_score, r.relevance, r.location_match, p.id AS prospect_id, " . LeadFilters::select() . "
 			FROM {$from}
 			WHERE {$where}
 			ORDER BY {$this->orderBy($sort)}
@@ -216,6 +220,12 @@ class ResultRepository
 
 	private function orderBy(string $sort): string
 	{
+		$lead = LeadFilters::order($sort, 'COALESCE(r.relevance_score, -1) DESC, r.id ASC');
+
+		if ($lead !== null) {
+			return $lead;
+		}
+
 		return match ($sort) {
 			'name' => 'c.name ASC, r.id ASC',
 			'position' => 'r.position ASC, r.id ASC',

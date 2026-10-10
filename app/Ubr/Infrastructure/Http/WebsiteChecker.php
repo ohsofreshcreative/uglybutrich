@@ -5,6 +5,8 @@ namespace App\Ubr\Infrastructure\Http;
 use App\Ubr\Domain\Companies\CompanyNormalizer as N;
 
 /**
+ * Sprawdza dostępność strony firmy (obecnie używane przez testy i jako narzędzie pomocnicze; weryfikacja
+ * w kolejce korzysta z WebsiteInspector). Pobieranie przez UrlGuard + przypięcie IP — jak PageFetcher.
  * Sprawdza dostępność strony firmy i to, czy strona odpowiada nazwie firmy.
  * Brak odpowiedzi NIE powoduje odrzucenia firmy — zapisujemy tylko status.
  */
@@ -19,24 +21,12 @@ class WebsiteChecker
 	{
 		$result = ['status' => 'unreachable', 'http_code' => null, 'final_url' => null, 'final_domain' => null, 'title' => null, 'name_match' => false, 'error' => null];
 
-		$response = wp_safe_remote_get($url, [
-			'timeout' => $timeout,
-			'redirection' => 4,
-			'user-agent' => self::USER_AGENT,
-			'limit_response_size' => 400 * 1024,
-			'headers' => ['Accept' => 'text/html,application/xhtml+xml', 'Accept-Language' => 'pl,en;q=0.5'],
-		]);
+		[$response, $finalUrl] = $this->get($url, $timeout);
 
 		if (is_wp_error($response)) {
 			// Czasem serwery odrzucają tylko http — spróbuj https.
 			if (str_starts_with($url, 'http://')) {
-				$https = 'https://' . substr($url, 7);
-				$response = wp_safe_remote_get($https, [
-					'timeout' => $timeout,
-					'redirection' => 4,
-					'user-agent' => self::USER_AGENT,
-					'limit_response_size' => 400 * 1024,
-				]);
+				[$response, $finalUrl] = $this->get('https://' . substr($url, 7), $timeout);
 			}
 
 			if (is_wp_error($response)) {
@@ -50,7 +40,6 @@ class WebsiteChecker
 		$body = (string) wp_remote_retrieve_body($response);
 		$result['http_code'] = $code ?: null;
 
-		$finalUrl = $this->finalUrl($response) ?? $url;
 		$result['final_url'] = mb_substr($finalUrl, 0, 500);
 		$result['final_domain'] = N::domain($finalUrl);
 
@@ -98,20 +87,47 @@ class WebsiteChecker
 	}
 
 	/**
-	 * @param array<string, mixed> $response
+	 * GET z ręczną obsługą przekierowań — każdy krok przez UrlGuard (SSRF) z przypięciem IP (DNS rebinding).
+	 *
+	 * @return array{0: array<string, mixed>|\WP_Error, 1: string}
 	 */
-	private function finalUrl(array $response): ?string
+	private function get(string $url, int $timeout): array
 	{
-		$http = $response['http_response'] ?? null;
+		$guard = app(UrlGuard::class);
+		$current = $url;
 
-		if ($http instanceof \WP_HTTP_Requests_Response) {
-			$raw = $http->get_response_object();
+		for ($hop = 0; $hop <= 4; $hop++) {
+			$check = $guard->check($current);
 
-			if (isset($raw->url) && is_string($raw->url)) {
-				return $raw->url;
+			if (! $check['ok']) {
+				return [new \WP_Error('ubr_ssrf', 'Adres zablokowany (ochrona SSRF): ' . $check['reason']), $current];
 			}
+
+			$unpin = PageFetcher::pin($current, $check['ips'] ?? []);
+			$response = wp_remote_get($current, [
+				'timeout' => $timeout,
+				'redirection' => 0,
+				'user-agent' => self::USER_AGENT,
+				'limit_response_size' => 400 * 1024,
+				'headers' => ['Accept' => 'text/html,application/xhtml+xml', 'Accept-Language' => 'pl,en;q=0.5'],
+			]);
+			$unpin();
+
+			if (is_wp_error($response)) {
+				return [$response, $current];
+			}
+
+			$code = (int) wp_remote_retrieve_response_code($response);
+			$location = (string) wp_remote_retrieve_header($response, 'location');
+
+			if ($code >= 300 && $code < 400 && $location !== '') {
+				$current = PageFetcher::absolute($location, $current);
+				continue;
+			}
+
+			return [$response, $current];
 		}
 
-		return null;
+		return [new \WP_Error('ubr_redirects', 'Zbyt wiele przekierowań.'), $current];
 	}
 }

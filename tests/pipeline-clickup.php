@@ -567,6 +567,24 @@ $cuRun();
 UbrT::ok($bf['status'] === 200 && $bf['data']['queued'] <= 1 && (int) $db->value("SELECT COUNT(*) FROM {$db->table(Tables::CLICKUP_EXPORTS)} WHERE rule_id = %d AND created_at >= %s", $ruleId, gmdate('Y-m-d 00:00:00')) <= 2, '49. backfill w granicach dziennego limitu reguły (2)');
 UbrT::ok(($cuRepo->exportFor($orgA, $hist, 'L1')['export_status'] ?? '') === 'success', '49. po potwierdzeniu historyczna firma wyeksportowana');
 
+// P7 (audyt QA). Worker przerwany po wysłaniu POST: eksport „running” na początku próby → UNKNOWN, bez drugiego POST.
+$crashCo = $mkVisible('pl-crash', 'Ubrtest Crash Export', 'https://pl-crash.ubrtest.pl/');
+$crashExp = $cuRepo->reserveExport(['organization_id' => $orgA, 'company_id' => $crashCo, 'prospect_id' => null, 'user_id' => $uA, 'connection_id' => (int) $connA['id'], 'workspace_id' => '901', 'list_id' => 'L1', 'list_name' => 'Leady', 'variant' => 0]);
+$cuRepo->updateExport($crashExp, ['export_status' => 'running']);
+$crashJob = $cuRepo->createJob(['organization_id' => $orgA, 'user_id' => $uA, 'connection_id' => (int) $connA['id'], 'export_id' => $crashExp, 'company_id' => $crashCo, 'operation' => 'create']);
+$postsBefore = $cuCalls('POST /list/L1/task');
+$cuRun();
+UbrT::ok($cuRepo->job($crashJob)['status'] === 'unknown' && $cuRepo->export($orgA, $crashExp)['export_status'] === 'unknown' && $cuCalls('POST /list/L1/task') === $postsBefore, 'P7. przerwany eksport (status running) → UNKNOWN, bez ponownego POST (brak duplikatu zadania)');
+
+// P7. Zadanie zabite wielokrotnie (wyczerpane próby, wygasła blokada) → failed, a nie nieskończone ponawianie.
+$deadCo = $mkVisible('pl-dead', 'Ubrtest Dead Job', 'https://pl-dead.ubrtest.pl/');
+$deadExp = $cuRepo->reserveExport(['organization_id' => $orgA, 'company_id' => $deadCo, 'prospect_id' => null, 'user_id' => $uA, 'connection_id' => (int) $connA['id'], 'workspace_id' => '901', 'list_id' => 'L1', 'list_name' => 'Leady', 'variant' => 0]);
+$deadJob = $cuRepo->createJob(['organization_id' => $orgA, 'user_id' => $uA, 'connection_id' => (int) $connA['id'], 'export_id' => $deadExp, 'company_id' => $deadCo, 'operation' => 'create']);
+$cuRepo->updateJob($deadJob, ['status' => 'running', 'attempts' => ClickUpRunner::MAX_ATTEMPTS + 1, 'locked_until' => gmdate('Y-m-d H:i:s', time() - 60), 'next_attempt_at' => gmdate('Y-m-d H:i:s', time() - 600)]);
+$postsBefore = $cuCalls('POST /list/L1/task');
+$cuRun();
+UbrT::ok($cuRepo->job($deadJob)['status'] === 'failed' && $cuCalls('POST /list/L1/task') === $postsBefore, 'P7. zadanie z wyczerpanymi próbami po przerwaniu procesu → failed, bez kolejnego POST');
+
 // 50. Rozłączenie: usuwa token, wyłącza reguły; dalszy eksport niemożliwy.
 UbrT::eq(200, ubrt_rest($uA, 'POST', '/clickup/disconnect')['status'], '50. Disconnect');
 UbrT::ok($cuRepo->connection($orgA, $uA) === null && ubrt_rest($uA, 'GET', '/clickup/status')['data']['state'] === 'not_connected', '50. token usunięty, stan Not Connected');

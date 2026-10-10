@@ -37,6 +37,13 @@ class UbrServiceProvider extends ServiceProvider
 	{
 		// Migracje + organizacja domyślna (idempotentnie, tanio gdy aktualne).
 		add_action('init', fn () => $this->safely(fn () => $this->app->make(Bootstrapper::class)->maybeRun()), 1);
+		add_action('admin_notices', function (): void {
+			$error = current_user_can('manage_options') ? $this->app->make(\App\Ubr\Infrastructure\Database\Migrator::class)->lastError() : null;
+
+			if ($error) {
+				printf('<div class="notice notice-error"><p><strong>Ugly but Rich:</strong> migracja bazy danych nie powiodła się (%s): %s. Uruchom <code>wp ubr migrate</code> po usunięciu przyczyny.</p></div>', esc_html(get_date_from_gmt(gmdate('Y-m-d H:i:s', $error['at']), 'Y-m-d H:i')), esc_html($error['message']));
+			}
+		});
 
 		// Panel /app.
 		add_action('init', fn () => $this->app->make(AppPages::class)->registerRewrites(), 10);
@@ -55,6 +62,16 @@ class UbrServiceProvider extends ServiceProvider
 		add_action(\App\Ubr\Services\WebsiteAnalysisRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(\App\Ubr\Services\WebsiteAnalysisRunner::class)->tick()));
 		add_action(\App\Ubr\Services\ContactResearchRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(\App\Ubr\Services\ContactResearchRunner::class)->tick()));
 		add_action(\App\Ubr\Services\ClickUpRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(\App\Ubr\Services\ClickUpRunner::class)->tick()));
+		add_action(\App\Ubr\Services\LeadIntelligenceRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(\App\Ubr\Services\LeadIntelligenceRunner::class)->tick()));
+		// Zmiana danych firmy → ocena Lead Intelligence do przeliczenia (tylko zapisane dane; worker w tle).
+		add_action('ubr/company/changed', function ($companyId, $reason = '', $organizationId = null) {
+			$this->safely(function () use ($companyId, $reason, $organizationId) {
+				$this->app->make(\App\Ubr\Services\LeadIntelligenceService::class)->invalidate((int) $companyId, (string) $reason, $organizationId ? (int) $organizationId : null);
+				$this->app->make(\App\Ubr\Services\LeadIntelligenceRunner::class)->kick();
+			});
+		}, 20, 3);
+		// Action Center: zmiana danych firmy → nowe klucze cache liczników (organizacja albo wszystkie, gdy dane są wspólne).
+		add_action('ubr/company/changed', fn ($companyId, $reason = '', $organizationId = null) => $this->safely(fn () => $organizationId ? \App\Ubr\Services\ActionCenterService::bumpOrganization((int) $organizationId) : \App\Ubr\Services\ActionCenterService::bumpGlobal()), 30, 3);
 		// Zdarzenia firm (dodanie do Prospects, weryfikacja, analiza, kontakty, zmiana statusu) → reguły ClickUp (tylko kolejka).
 		add_action('ubr/company/changed', fn ($companyId, $reason = '', $organizationId = null) => $this->safely(fn () => $this->app->make(\App\Ubr\Services\ClickUpRuleService::class)->trigger((int) $companyId, (string) $reason, $organizationId ? (int) $organizationId : null)), 10, 3);
 		add_action('wp_ajax_ubr_screenshot', fn () => $this->app->make(\App\Ubr\Http\ScreenshotEndpoint::class)->handle());
@@ -77,6 +94,8 @@ class UbrServiceProvider extends ServiceProvider
 			$this->safely(fn () => $this->app->make(\App\Ubr\Services\ContactResearchRunner::class)->kick());
 			// Kolejka operacji ClickUp: wznowienie zaległych.
 			$this->safely(fn () => $this->app->make(\App\Ubr\Services\ClickUpRunner::class)->kick());
+			// Lead Intelligence: przeliczenie zaległych ocen.
+			$this->safely(fn () => $this->app->make(\App\Ubr\Services\LeadIntelligenceRunner::class)->kick());
 		});
 
 		// Po migracji 1.2: trafność dla istniejących wyników (bez zapytań zewnętrznych).

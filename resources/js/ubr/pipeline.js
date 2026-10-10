@@ -30,6 +30,17 @@ const CALLBACK = {
 };
 
 /** Lokalny czas (YYYY-MM-DDTHH:mm) dla pól datetime-local. */
+/**
+ * Wartość <input type="datetime-local"> (czas lokalny PRZEGLĄDARKI, bez strefy) → ISO z offsetem. Serwer przyjmuje
+ * ISO z offsetem; bez niego interpretował wartość w strefie WordPressa — przy innej strefie przeglądarki (np. WP w UTC,
+ * użytkownik w Warszawie) termin przesuwał się o różnicę, a aktywność „teraz” była odrzucana jako „w przyszłości”.
+ */
+export const isoFromLocalInput = (value) => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return value || null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? value : d.toISOString();
+};
+
 export const localInput = (date = new Date()) => {
   const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return d.toISOString().slice(0, 16);
@@ -113,10 +124,12 @@ export const salesStore = () => ({
     return this.salesCall(() => api(`/notes/${note.id}`, { method: 'DELETE' }), 'Usunięto notatkę.');
   },
   addActivity(form) {
-    return this.salesCall(() => api(`/prospects/${this.drawer.sales.prospect.id}/activities`, { method: 'POST', body: form }), 'Zapisano aktywność.');
+    const body = { ...form, occurred_at: isoFromLocalInput(form.occurred_at) };
+    return this.salesCall(() => api(`/prospects/${this.drawer.sales.prospect.id}/activities`, { method: 'POST', body }), 'Zapisano aktywność.');
   },
   addFollowup(form) {
-    return this.salesCall(() => api(`/prospects/${this.drawer.sales.prospect.id}/followups`, { method: 'POST', body: form }), 'Zaplanowano działanie.');
+    const body = { ...form, due_at: isoFromLocalInput(form.due_at) };
+    return this.salesCall(() => api(`/prospects/${this.drawer.sales.prospect.id}/followups`, { method: 'POST', body }), 'Zaplanowano działanie.');
   },
   setFollowup(f, status) {
     return this.salesCall(() => api(`/followups/${f.id}`, { method: 'POST', body: { status } }), status === 'completed' ? 'Oznaczono jako wykonane.' : 'Zapisano.');

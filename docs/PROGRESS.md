@@ -169,6 +169,137 @@ Wszystkie wyszukiwania COMPLETED w 1–32 s. Wszystkie wyniki CPS mają status P
 - ClickUp: brak synchronizacji dwukierunkowej (zgodnie z zakresem); mapowanie priorytetu ClickUp nieudokumentowane — nieużywane; HTTP Redirect URI dopuszczony lokalnie, w produkcji wymagany HTTPS.
 - Klucz SSH w repozytorium — plan: docs/SECURITY-KEY.md (rotacja i czyszczenie historii za zgodą).
 
+## Etap 5 — Lead Intelligence + Smart Lead Ranking (10.10.2026)
+
+**Zrobione (szczegóły: ARCHITECTURE.md §13)**
+- M007: `ubr_lead_intelligence` (ocena per organizacja), `ubr_lead_insights`, `ubr_lead_intelligence_history`.
+- Lead Potential Score (45/30/15/10, brak danych = niezmierzone, limit kompletności, limit 65 bez analizy strony), Data Coverage, Data Confidence, hard blockers / soft warnings, Website Opportunity Insights (7 kategorii, severity z progów, evidence), Redesign Assessment, Recommended Next Action (7 akcji), Smart Lead Ranking, Lead Research Summary, Potential Sales Angles, historia i wersjonowanie, przeliczanie w tle po zdarzeniach.
+- UI: zakładka „Lead Intelligence” w karcie firmy, kolumna / filtry / sortowanie w Discover i Prospects, Smart Lead Ranking na Dashboardzie; link `?company=ID&tab=lead`.
+
+**Testy automatyczne:** 533/533 (było 467): 50 przypadków Lead Intelligence (scoring 1–15, insights 16–24, rekomendacje 25–34, summary 35–39, dane i wydajność 40–50) + regresje z walidacji biznesowej.
+
+**Test na żywo (LocalWP, 0 płatnych zapytań, bez nowych analiz):** M007 zastosowana; firmy organizacji (wyniki wyszukiwań + prospekty) ocenione automatycznie w tle — w sprawdzonych wyszukiwaniach #7 i #8 żadna firma nie czeka na ocenę; filtry i sortowanie (Smart Ranking, Lead, Redesign, rekomendacja, bez blokerów) działają w SQL (lista 50 firm ~80 ms); karta firmy, Dashboard i Prospects bez błędów konsoli.
+
+| Firma | Relevance | Opportunity | Contact Priority | Lead Potential | Confidence | Coverage | Redesign | Rekomendacja |
+|---|---|---|---|---|---|---|---|---|
+| NozziTec | 92 | 33 | — (brak osób; kanał firmowy) | 75 SCORED | HIGH | 95% | MODERATE | Review website |
+| FLOWAIR | 92 | 32 | — | 74 SCORED | HIGH | 95% | MODERATE | Review website |
+| ZAMET | 92 | 36 | — (kanały działów) | 73 SCORED | HIGH | 95% | MODERATE | Review website |
+| FAMUR | 92 | brak analizy | 67 | 65 PROVISIONAL | MEDIUM | 55% | INSUFFICIENT_DATA | Research further |
+| PCO | 74 | brak analizy | 65 | 65 PROVISIONAL | MEDIUM | 55% | INSUFFICIENT_DATA | Research further |
+
+**Walidacja biznesowa → poprawka:** w pierwszej wersji FAMUR i PCO (bez analizy strony) dostawały 77 — więcej niż firmy z potwierdzonymi problemami strony — bo normalizacja po zmierzonych danych nagradzała brak danych. Dodano limit 65 bez danych o stronie (`lead-2026-10-v2`) i test regresyjny. Firmy bez decydenta (ZAMET, NozziTec, FLOWAIR) nie są traktowane jako słabe (Contact Readiness 2/10, wynik 73–75).
+
+**Ograniczenia:** brak oceny wizualnej (AI Vision wyłączone) — stąd brak STRONG dla testowanych stron i rekomendacja ręcznej oceny; wiele nieanalizowanych firm ma wynik 65 (limit) i rekomendację „Research further”; skuteczność rankingu niepotwierdzona wynikami sprzedaży.
+
+## Etap 5.1 — Discover UI Redesign + Live Website Preview (10.10.2026)
+
+**Zrobione (szczegóły: ARCHITECTURE.md §14; bez migracji, bez zmian w scoringu, wyszukiwaniu, workerach i ClickUp)**
+- Discover: układ pionowy na pełną szerokość (Formularz → Status → Filtry → Wyniki), formularz w CSS Grid, zwijany („Zwiń” / „Rozwiń”), automatycznie zwijany po udanym starcie (wartości zachowane, stan w `localStorage`).
+- Tabela bez przewijania w poziomie (`table-fixed`, procentowy `colgroup`): Firma · Weryfikacja · Domena · Lokalizacja · Oceny (Lead Potential + Confidence; rozwijane szczegóły z Relevance, Opportunity, Contact Priority, Redesign, rekomendacją) · ⋯. Poniżej 1024 px karty.
+- Wspólne menu akcji ⋯ (Discover + Prospects): tylko akcje mające zastosowanie, uprawnienia z backendu, stany „w toku”, obsługa klawiatury i ARIA, renderowane w `<body>` (nieobcinane).
+- Wspólny modal podglądu (Discover, Prospects, karta firmy): LIVE (iframe ze zwalidowanego adresu, sandbox, bez kamery/mikrofonu/lokalizacji, bez proxy) | SCREENSHOT (istniejące zrzuty, empty state), DESKTOP | MOBILE (390 px), „Otwórz stronę”, komunikat o stronach blokujących osadzanie, Escape, fokus, blokada przewijania tła.
+
+**Testy automatyczne:** PHP 587/587 (było 533; +54 w `tests/discover-ui.php`: kontrakt danych tabeli i menu, filtry/sortowanie/paginacja, izolacja, uprawnienia, brak efektów ubocznych podglądu — brak nowych analiz, wyszukiwań decydentów, zapytań API i zadań WP-Cron — reguły iframe w szablonach). JS: `node tests/js/preview-url.test.mjs` 19/19 (walidacja adresu, schematy `javascript:` / `data:` / `file:`, dane logowania w URL, http→https na stronie https).
+
+**Testy wizualne i interakcji (Playwright/Chromium w kontenerze, dane testowe):** 1920 / 1440 / 1280 / 768 / 390 px — brak poziomego przewijania strony, tabela mieści się w kontenerze (≥ 1024 px), karty < 1024 px, formularz nad wynikami, wyniki na pełną szerokość, brak błędów JS; zwijanie i zachowanie wartości; menu myszą i klawiaturą (Enter, strzałki, Escape z powrotem fokusu, klik poza, zmiana rozmiaru, przewijanie); podgląd LIVE / MOBILE 390 px / SCREENSHOT bez zrzutów / Escape / fokus / `javascript:` i błędny URL odrzucone; Prospects i karta firmy — ten sam modal.
+
+**Test na żywo (LocalWP, wyszukiwanie #7, 0 płatnych zapytań, bez nowych analiz):** nowy układ i tabela bez przewijania (szerokość okna 2056 px CSS); menu ⋯ dla ZAMET (Analizuj ponownie / Znajdź ponownie decydentów / Zapisz do Prospects); podgląd LIVE ZAMET i NozziTec (wyświetlają się), FLOWAIR i Inter Cars blokują osadzanie → komunikat + przełączenie na SCREENSHOT działa; SCREENSHOT desktop i mobile ZAMET / FLOWAIR (zapisane zrzuty, proporcje zachowane); Prospects i karta firmy otwierają ten sam modal; Escape zamyka najpierw podgląd, potem kartę firmy; ostatnie analizy ZAMET / NozziTec / FLOWAIR bez zmian (10.10, 12:04–12:05), brak aktywnych analiz; Lead Potential bez zmian (NozziTec 75, FLOWAIR 74, ZAMET 73, FAMUR 65), filtry `min_lead`, `recommendation`, `lead_confidence`, `redesign` i sortowanie `rank` / `lead` działają.
+
+**Ograniczenia:** strony z `X-Frame-Options` / CSP `frame-ancestors` nie wyświetlą się w LIVE (przeglądarka nie pozwala tego wiarygodnie wykryć — stały komunikat i ręczne przełączenie); sandbox może ograniczać część funkcji osadzonych stron; tryb MOBILE to węższy kontener, nie emulacja urządzenia; na LocalWP nie dało się zmienić szerokości okna Chrome — responsywność sprawdzona w Playwright; tabela Prospects ma nadal własne przewijanie poziome (poza zakresem 5.1).
+
+## Etap 6 — Prospecting Dashboard & Action Center (10.10.2026)
+
+Zakres: obie wersje promptu 6 (Action Center + Lead Recommendations / Sales Opportunity Workspace) połączone w jeden moduł. Szczegóły: ARCHITECTURE.md §15, wdrożenie: docs/DEPLOYMENT.md.
+
+**Zrobione**
+- Migracje: M008 (`ubr_action_snoozes`), M009 (`ubr_manual_reviews` + `ubr_manual_review_history`). Tylko nowe tabele.
+- Action Priority Engine: deterministyczne kategorie 1–8, stabilne remisy, ta sama reguła w PHP i SQL. Odrębny od Lead Potential.
+- Today's Priorities: maksymalnie 5 naraz, deduplikacja per firma, follow-upy grupowane.
+- Listy robocze (filtry SQL, paginacja, sortowanie):
+  - Top Opportunities (Smart Lead Ranking),
+  - Needs Attention (jedna główna kategoria + braki pomocnicze),
+  - Ready to Contact (decydent i kanały tylko z zapisanych danych),
+  - Review Website, Needs Research, Verify Company, Find Decision Maker, Missing Website Analysis, High Potential, Blocked, Follow-ups.
+- Overview KPI z definicjami i drill-down: Total Prospects, Follow-ups Due, Ready to Contact, High Potential, Needs Review, Missing Analysis.
+- Follow-ups (Overdue / Today / Upcoming 7 dni, „Wykonane”) i Recent Activity.
+- Prospecting Coverage: niezależne liczniki, bez fałszywego lejka.
+- My Work / Team Work / Unassigned.
+- Quick Actions przez istniejące endpointy, odłożenie działania, szybkie przejścia (Discover / Prospects / Pipeline / Review Websites / Follow-ups).
+- Manual Website Review z historią w karcie firmy i w podglądzie strony. Nie zmienia scoringów.
+
+**Testy automatyczne:** PHP 756/756 (było 533 po etapie 5; +54 w etapie 5.1; +169 w `tests/action-center.php`). Zakres nowych testów:
+- reguły silnika i zgodność SQL ↔ PHP,
+- kolejność i remisy, deduplikacja,
+- KPI i liczniki, wszystkie listy (dokładne zbiory firm),
+- filtry, sortowanie, paginacja,
+- My/Team/Unassigned,
+- odłożenie i przywrócenie, invalidation cache,
+- strefa czasowa (UTC+14, Los Angeles),
+- izolacja organizacji, IDOR, autoryzacja,
+- puste stany,
+- Manual Review (tworzenie, edycja, historia, walidacja, uprawnienia, multi-tenancy, brak wpływu na scoring),
+- regresje Lead Intelligence / Dashboard / Prospects / Discover / Pipeline,
+- brak nowych analiz, wyszukiwań, zapytań API i zadań ClickUp.
+
+JS: `node tests/js/preview-url.test.mjs` 19/19.
+
+**Testy wizualne i interakcji** (Playwright/Chromium w kontenerze, dane testowe):
+- Szerokości 1920 / 1440 / 1280 / 768 / 390 px: brak poziomego przewijania, maksymalnie 5 priorytetów, 6 KPI, poprawna kolejność sekcji, tabela list mieści się w kontenerze (≥ 1024 px), karty poniżej 1024 px, brak błędów JS.
+- Interakcje:
+  - klik KPI → przefiltrowana lista,
+  - „Wykonane” → odświeżone KPI i lista,
+  - menu Quick Actions zależne od stanu,
+  - odłożenie i przywrócenie działania,
+  - przełącznik Team / My / Unassigned,
+  - CTA otwiera kartę firmy (Sprzedaż),
+  - zapis oceny ręcznej w karcie firmy (status, notatka, historia) i ta sama ocena w podglądzie strony (tryb SCREENSHOT).
+
+**Test na żywo (LocalWP, 0 płatnych zapytań, bez nowych analiz)** — wykonany na pierwszej części etapu: M008, silnik, priorytety, listy, odłożenie. Wyniki:
+- M008 zastosowana automatycznie.
+- `GET /action-center`: 200, około 110 ms (65 ocenionych firm, 0 czekających na ocenę).
+- Priorytety (60 działań): NozziTec 75, FLOWAIR 74, ZAMET 73 → Review website (pierwsze), FAMUR 65 i PCO 65 → Brak analizy strony („brak analizy nie oznacza słabej firmy”).
+- Ready to Contact = 0 (żadnych fałszywych rekomendacji kontaktu). Blocked = 1 (Factories: domena innego podmiotu).
+- Find Decision Maker = 2: prospekci bez wyszukanych decydentów nie są odrzucani.
+- Odłożenie NozziTec o 1 dzień zdjęło pozycję z listy (60 → 59), przywrócenie ją przywróciło (stan bazy bez zmian).
+- CTA „Podgląd strony” otwiera wspólny modal. KPI „Wykluczone” otwiera listę Blocked. Brak błędów konsoli. Brak poziomego przewijania przy szerokości 560 px.
+- Brak follow-upów w danych LocalWP — follow-upy testowane tylko w kontenerze (nie tworzono fikcyjnych rekordów w bazie użytkownika).
+
+**Wydajność (test syntetyczny, 10 000 ocenionych firm w kontenerze, dane usunięte po teście):** wszystkie liczniki 102 ms, Today's Priorities około 120 ms (także strona 200), Top Opportunities 73 ms, Needs Attention z filtrem 96 ms, coverage 39 ms.
+
+**Test na żywo — druga część (LocalWP, 10.10.2026, po ponownym połączeniu komputera):**
+- M009 zastosowana automatycznie; `GET /companies/{id}/manual-review` 200 (~50 ms) dla NozziTec, FLOWAIR, ZAMET — status „Brak oceny”, historia pusta.
+- `GET /action-center` 200, ~70 ms. KPI: Total Prospects 2 (odkryte 65), Follow-ups Due 0, Ready to Contact 0, High Potential 3, Needs Review 3, Missing Analysis 46.
+- Today's Priorities: 5 z 60 działań — NozziTec 75, FLOWAIR 74, ZAMET 73 (Review website, CTA „Podgląd strony”), FAMUR 65, PCO 65 (Brak analizy strony, CTA „Analizuj stronę”).
+- Listy: Top Opportunities 27 (NozziTec, FLOWAIR, ZAMET, FAMUR, PCO, Mennica Polska…), Needs Attention 60, Find Decision Maker 2, Blocked 1 (Factories), Review Website 3, Ready to Contact 0; każda ~50–80 ms.
+- Needs Attention dla FAMUR: decydent i kanały tylko z zapisanych danych (zarząd z KRS, e-mail firmowy), ocena ręczna „Brak oceny”.
+- Karta firmy (Website Analysis) i podgląd strony (SCREENSHOT, prawdziwy zrzut NozziTec z analizy) pokazują panel oceny ręcznej z zastrzeżeniem, że nie zmienia scoringów; LIVE ładuje zwalidowany adres firmy w sandboxie. Brak błędów konsoli, brak poziomego przewijania (okno 560 px — większej szerokości okna nie dało się ustawić; szerokości 1920–390 px sprawdzone w Playwright).
+- Zapis oceny ręcznej NIE był testowany na żywo — celowo, żeby nie tworzyć rekordów w bazie użytkownika; pokryty testami automatycznymi i Playwright.
+
+**Ograniczenia:**
+- Rekomendacje wynikają z Lead Intelligence (bez AI Vision), więc dominują Review website i Missing analysis.
+- Brak trendów KPI (brak historii).
+- Ręczna ocena nie wpływa na ranking. To decyzja na przyszłą wersję algorytmu.
+- Tabela Prospects ma nadal własne przewijanie poziome (poza zakresem).
+
+## Etap 7 — Audyt QA, testy i gotowość produkcyjna (10.10.2026)
+
+Szczegóły: `docs/QA-REPORT.md`, ARCHITECTURE.md §16, wdrożenie: `docs/DEPLOYMENT.md`. Bez nowych modułów i bez migracji (schemat v9).
+
+**Naprawione (z testami regresyjnymi):**
+- bezpieczeństwo: obejście ochrony SSRF adresami IPv4 osadzonymi w IPv6 (PHP i przeglądarka), stored XSS przez link profilu osoby i niesprawdzane linki zewnętrzne, DNS rebinding w pobraniach PHP, weryfikacja firmy bez ochrony SSRF, WebSockety w rendererze, zapisy anonimowego pingu workera, niesprawdzany `search_id`;
+- kolejki: nieatomowe blokady (teraz MySQL `GET_LOCK`), nieskończone ponawianie przerwanych zadań, możliwy duplikat zadania ClickUp po przerwaniu workera, blokowanie kolejki Lead Intelligence przez jedną firmę, brak zapasowego crona weryfikacji, `wp ubr queue-work --all`, zlecenia workerów wysyłane po odpowiedzi (zmiana statusu bez ~1 s czekania), osierocone procesy Chromium po timeoucie;
+- migracje: ponawianie po błędzie przy każdym żądaniu, równoległe migracje, `wp ubr migrate` z kodem wyjścia, `UBR_AUTO_MIGRATE`;
+- dane: ogólny e-mail firmy zapisywany jako e-mail osoby (ręcznie i z ekstraktora), ponowna analiza cofająca firmę do „Brak analizy”, brak przeliczenia po „not a fit”, przypisania usuniętego członka, KPI Total Prospects bez filtra właściciela, starzenie ocen w czasie, NIP/REGON-wypełniacze, filtry przy drill-down KPI, **strefa czasowa formularzy** (aktywność „teraz” odrzucana, przesunięte terminy follow-upów), pusta notatka oceny, archiwizacja przez `DELETE` bez odświeżenia liczników, znacznik „wstępny” na Dashboardzie, lazy load sekcji „Ostatnie wyszukiwania”, stopka karty firmy na 390 px, komunikaty błędów z treścią wyjątków bazy.
+
+**Testy:** PHP 836/836 (było 756); JS 19/19 + 35/35 + 5/5 (3 strefy czasowe); Playwright w kontenerze: 43 + 12 + 30 + 7 + 138 (9 ekranów × 5 szerokości, podgląd, klawiatura i fokus, stany ładowania/błędu/puste, E2E Company → Prospect → Pipeline → Follow-up → Activity i ocena ręczna — zapis w bazie testowej kontenera, nie w bazie użytkownika). Test obciążeniowy 10 000 firm: wszystkie listy ≤ 130 ms, Dashboard bez cache ~300 ms.
+
+**Nie naprawione (decyzje / poza zakresem):** klucz SSH w historii Git (unieważnienie — właściciel), wpływ researchu bez znalezionych osób na Lead Potential i pasma wielkości w Contact Priority (zmiany scoringu — decyzja właściciela), retencja tabel logów, model zaproszeń członków, dzienny limit ClickUp w UTC, pełna optymalizacja licznika kolejki Lead Intelligence przy dużej skali (M010).
+
+**Test na żywo (LocalWP, 10.10.2026, po wgraniu etapu 7, tylko odczyt):** testy JS na komputerze z LocalWP 35/35, 19/19, 5/5; `GET /action-center` 200 / 90 ms, KPI i kolejki bez zmian (2 / 0 / 0 / 3 / 3 / 46; Top 27, Needs Attention 60, Blocked 1), priorytety NozziTec 75, FLOWAIR 74, ZAMET 73, FAMUR 65, PCO 65; listy i karta firmy 56–84 ms; `/dashboard` pobierane dopiero po rozwinięciu sekcji; drill-down KPI bez filtrów (46 = 46); w rzeczywistych kontaktach brak adresów ogólnych jako e-maili osób i brak linków spoza http/https; Discover, Prospects, Pipeline, Settings i karta firmy bez poziomego przewijania i bez błędów konsoli; stopka karty firmy zawija przyciski. Zapisów nie testowano na żywo (bez zmian danych użytkownika) — E2E w bazie testowej kontenera.
+
+**Rekomendacja:** READY WITH CONDITIONS — warunki w `docs/QA-REPORT.md` §8.
+
 ## Następny etap
 
-Kolejne moduły wg decyzji właściciela (nie rozpoczęte). Do zrobienia przy ClickUp: konfiguracja aplikacji OAuth i pierwszy kontrolowany eksport. Do decyzji: włączenie Apollo People Search (klucz master, bez enrichmentu), klucze CEIDG/GUS, rotacja klucza SSH z repozytorium.
+Przed wdrożeniem na Hostinger: unieważnienie klucza SSH i commit jego usunięcia (`docs/SECURITY-KEY.md`), sprawdzenie wymagań serwera i konfiguracji produkcyjnej (`docs/DEPLOYMENT.md`), decyzja o Website Analyzerze na Hostingerze (VPS / osobny renderer / tryb PARTIAL). Do decyzji: zmiany scoringu D12/D13 z raportu QA, retencja logów, ClickUp Live (lista kontrolna w QA-REPORT §10), Apollo People Search, klucze CEIDG/GUS.

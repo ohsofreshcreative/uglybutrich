@@ -5,6 +5,9 @@
 import Alpine from 'alpinejs';
 import { api } from './ubr/api.js';
 import { salesStore, registerPipeline, localInput } from './ubr/pipeline.js';
+import { leadStore } from './ubr/lead.js';
+import { registerUi, livePreviewUrl, safeWebsiteUrl } from './ubr/ui.js';
+import { registerDashboard } from './ubr/dashboard.js';
 
 const CONFIDENCE = { confirmed: 'Potwierdzona', declared: 'Wg źródła', uncertain: 'Niepewna', unavailable: 'Brak' };
 const LOCATION = {
@@ -53,9 +56,10 @@ const withQuery = (url, params) => {
 document.addEventListener('alpine:init', () => {
   Alpine.store('ubr', {
     ...salesStore(),
+    ...leadStore(),
     toasts: [],
-    drawer: { open: false, loading: false, saving: false, error: null, company: null, tab: 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null },
-    preview: { open: false, loading: false, company: null, analysis: null, view: 'desktop', zoom: 1, fit: true, error: null, returnFocus: null },
+    drawer: { open: false, loading: false, saving: false, error: null, company: null, tab: 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null, lead: null, leadLoading: false },
+    preview: { open: false, loading: false, company: null, liveUrl: null, openUrl: null, upgraded: false, analysis: null, mode: 'live', view: 'desktop', zoom: 1, fit: true, error: null, frameKey: 0, returnFocus: null },
 
     toast(message, type = 'info') {
       const id = Date.now() + Math.random();
@@ -230,6 +234,7 @@ document.addEventListener('alpine:init', () => {
       if (tab === 'analysis' && !this.drawer.analysis) this.loadAnalysis();
       if (tab === 'contacts' && !this.drawer.contacts) this.loadContacts();
       if (tab === 'sales' && !this.drawer.sales) this.loadSales();
+      if (tab === 'lead' && !this.drawer.lead) this.loadLead();
     },
 
     toggleCompare(id) {
@@ -247,29 +252,68 @@ document.addEventListener('alpine:init', () => {
       }
     },
 
-    /** Podgląd strony: screenshot (zawsze) + opcjonalnie interaktywny iframe, jeśli strona pozwala na osadzanie. */
-    async openPreview(company, view = 'desktop') {
+    /**
+     * Podgląd strony (wspólny modal dla Discover, Prospects i karty firmy). Domyślnie LIVE: aktualna strona w iframe
+     * (adres z zapisanych danych firmy, tylko http/https). SCREENSHOT: ostatnie zrzuty Website Analyzera — dane analizy
+     * pobierane dopiero po otwarciu modala; nic nie jest analizowane ani generowane.
+     */
+    /** Bezpieczny zewnętrzny link do :href — tylko http/https (javascript:, data: itp. → brak atrybutu href). */
+    safeHref(url) {
+      return safeWebsiteUrl(url);
+    },
+    async openPreview(company, view = 'desktop', mode = 'live') {
       // Element, do którego wraca fokus po zamknięciu: aktywny element, a gdy kliknięcie myszą go nie ustawiło — kliknięty przycisk.
       const active = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
       const clicked = window.event?.target?.closest?.('button, a, [tabindex]') || null;
-      this.preview = { open: true, loading: true, company: { id: company.id, name: company.name, website_url: company.website_url, domain: company.domain }, analysis: null, view, zoom: 1, fit: true, error: null, returnFocus: active || clicked };
+      // Aplikacja na https → podgląd wersji https strony (iframe http byłby zablokowany); „Otwórz stronę” używa zapisanego adresu.
+      const { url: liveUrl, upgraded } = livePreviewUrl(company.website_url, window.location.protocol);
+      this.preview = {
+        open: true,
+        loading: true,
+        company: { id: company.id, name: company.name, website_url: company.website_url, domain: company.domain },
+        liveUrl,
+        openUrl: safeWebsiteUrl(company.website_url),
+        upgraded,
+        analysis: null,
+        mode: liveUrl ? mode : 'screenshot',
+        view: ['desktop', 'mobile'].includes(view) ? view : 'desktop',
+        zoom: 1,
+        fit: true,
+        error: null,
+        frameKey: Date.now(),
+        returnFocus: active || clicked,
+      };
+      document.documentElement.classList.add('overflow-hidden');
+      // Fokus na „Zamknij” — ponawiane, bo przycisk staje się widoczny dopiero po starcie przejścia x-show.
+      const focusClose = (n) => {
+        const b = document.querySelector('[data-preview-close]');
+        b?.focus();
+        if (this.preview.open && document.activeElement !== b && n > 0) setTimeout(() => focusClose(n - 1), 40);
+      };
+      setTimeout(() => focusClose(25), 0);
       try {
         const data = await api(`/companies/${company.id}/analysis`);
+        if (this.preview.company?.id !== company.id) return;
         this.preview.analysis = data.latest && Object.keys(data.latest.screenshots || {}).length ? data.latest : null;
         this.preview.active = data.active;
-        if (!this.preview.analysis) this.preview.error = data.active ? 'Analiza strony trwa — screenshoty pojawią się po jej zakończeniu.' : 'Brak screenshotów — uruchom analizę strony, aby zobaczyć podgląd.';
-        if (this.preview.analysis && !this.preview.analysis.screenshots[view]) this.preview.view = Object.keys(this.preview.analysis.screenshots)[0];
+        if (!this.preview.analysis) this.preview.error = data.active ? 'Analiza strony trwa — screenshoty pojawią się po jej zakończeniu.' : 'Brak zapisanych screenshotów tej strony.';
       } catch (e) {
         this.preview.error = e.message;
       } finally {
         this.preview.loading = false;
-        requestAnimationFrame(() => document.querySelector('[data-preview-close]')?.focus());
       }
+    },
+    setPreviewMode(mode) {
+      if (mode === 'live' && !this.preview.liveUrl) return;
+      this.preview.mode = mode;
+      this.preview.fit = true;
     },
     closePreview() {
       const back = this.preview.returnFocus;
       this.preview.open = false;
-      if (back && typeof back.focus === 'function') requestAnimationFrame(() => back.focus());
+      document.documentElement.classList.remove('overflow-hidden');
+      // Bez requestAnimationFrame: w karcie w tle klatki są wstrzymane, a fokus musi wrócić od razu.
+      if (back && typeof back.focus === 'function' && back.isConnected) back.focus({ preventScroll: true });
     },
     zoomPreview(delta) {
       this.preview.fit = false;
@@ -294,12 +338,13 @@ document.addEventListener('alpine:init', () => {
       clearTimeout(this._analysisTimer);
       clearTimeout(this._contactsTimer);
       clearTimeout(this._clickupTimer);
-      this.drawer = { open: true, loading: true, saving: false, error: null, company: null, tab: this.drawer.tab || 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null };
+      this.drawer = { open: true, loading: true, saving: false, error: null, company: null, tab: this.drawer.tab || 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null, lead: null, leadLoading: false };
       try {
         this.drawer.company = await api(`/companies/${id}`);
         if (this.drawer.tab === 'analysis') this.loadAnalysis();
         if (this.drawer.tab === 'contacts') this.loadContacts();
         if (this.drawer.tab === 'sales') this.loadSales();
+        if (this.drawer.tab === 'lead') this.loadLead();
       } catch (e) {
         this.drawer.error = e.message;
       } finally {
@@ -369,29 +414,39 @@ document.addEventListener('alpine:init', () => {
       const params = new URLSearchParams(window.location.search);
       const id = Number(params.get('company'));
       if (id > 0) {
-        if (params.get('tab') === 'sales') this.$store.ubr.drawer.tab = 'sales';
+        if (['company', 'lead', 'sales', 'contacts', 'analysis'].includes(params.get('tab'))) this.$store.ubr.drawer.tab = params.get('tab');
         this.$store.ubr.openCompany(id);
       }
     },
   }));
 
   registerPipeline(Alpine);
+  registerUi(Alpine);
+  registerDashboard(Alpine);
 
   Alpine.data('ubrDashboard', () => ({
     loading: true,
     error: null,
-    data: { stats: {}, recent_searches: [], recent_companies: [], pipeline: null, agenda: null },
+    data: { stats: {}, recent_searches: [], recent_companies: [], pipeline: null, agenda: null, top_leads: [] },
     funnelMax() {
       return Math.max(1, ...(this.data.pipeline?.by_status || []).map((s) => s.count));
     },
     statusCount(key) {
       return (this.data.pipeline?.by_status || []).find((s) => s.key === key)?.count ?? 0;
     },
-    async init() {
+    loaded: false,
+    /** Sekcja jest zwinięta (<details>) — /dashboard pobieramy dopiero przy pierwszym rozwinięciu, nie przy wejściu na stronę. */
+    init() {
+      if (this.$el.open) this.load();
+    },
+    async load() {
+      if (this.loaded) return;
+      this.loaded = true;
       try {
         this.data = await api('/dashboard');
       } catch (e) {
         this.error = e.message;
+        this.loaded = false;
       } finally {
         this.loading = false;
       }
@@ -411,6 +466,30 @@ document.addEventListener('alpine:init', () => {
     resultSort: 'relevance',
     analysisFilters: { min_opportunity: '', confidence: '', min_findings: '' },
     contactFilters: { has_contact: '', min_contact_score: '', contact_confidence: '', contact_role: '', min_contacts: '' },
+    leadFilters: { min_lead: '', lead_confidence: '', redesign: '', recommendation: '', no_blockers: '' },
+    // Zwijany formularz: stan zapamiętany lokalnie (wygoda użytkownika), wartości pól zostają w stanie komponentu.
+    formOpen: (() => {
+      try {
+        return window.localStorage.getItem('ubr_discover_form') !== 'collapsed';
+      } catch (e) {
+        return true;
+      }
+    })(),
+    toggleForm(open = !this.formOpen) {
+      this.formOpen = open;
+      try {
+        window.localStorage.setItem('ubr_discover_form', open ? 'open' : 'collapsed');
+      } catch (e) {
+        /* tryb prywatny / zablokowany storage — stan tylko w pamięci */
+      }
+    },
+    get formSummary() {
+      const f = this.form;
+      const industry = this.options.industries.find((i) => i.key === f.industry)?.label;
+      const region = this.options.regions.find((r) => r.key === f.region)?.label;
+      const parts = [industry || f.phrase || 'dowolna branża', f.city || (region ? 'woj. ' + region : 'cała Polska'), 'maks. ' + f.limit, (f.providers || []).join(', ') || 'brak źródeł'];
+      return parts.join(' · ');
+    },
     contactsBusy: false,
     selected: [],
     analyzeBusy: false,
@@ -453,7 +532,7 @@ document.addEventListener('alpine:init', () => {
     /** Odświeżaj wyniki, dopóki któraś analiza na stronie jest w kolejce / w toku. */
     watchAnalyses() {
       clearTimeout(this.resultsTimer);
-      if (this.results.items.some((c) => ['queued', 'running'].includes(c.analysis?.status) || ['queued', 'running'].includes(c.contacts?.status))) {
+      if (this.results.items.some((c) => ['queued', 'running'].includes(c.analysis?.status) || ['queued', 'running'].includes(c.contacts?.status) || c.lead?.pending)) {
         this.resultsTimer = setTimeout(async () => {
           await this.loadResults(this.results.page || 1, true);
         }, 6000);
@@ -520,6 +599,7 @@ document.addEventListener('alpine:init', () => {
       window.addEventListener('ubr:analysis-finished', () => this.search && this.loadResults(this.results.page || 1, true));
       window.addEventListener('ubr:contacts-queued', () => this.search && this.loadResults(this.results.page || 1, true));
       window.addEventListener('ubr:contacts-finished', () => this.search && this.loadResults(this.results.page || 1, true));
+      window.addEventListener('ubr:lead-changed', () => this.search && this.loadResults(this.results.page || 1, true));
     },
 
     destroy() {
@@ -534,6 +614,7 @@ document.addEventListener('alpine:init', () => {
         const search = await api('/discovery/searches', { method: 'POST', body: this.form });
         this.history.unshift(search);
         this.$store.ubr.toast('Wyszukiwanie uruchomione w tle.');
+        this.toggleForm(false); // po udanym starcie formularz zwija się (wartości zostają)
         await this.open(search.id);
       } catch (e) {
         this.formError = e.message;
@@ -595,7 +676,7 @@ document.addEventListener('alpine:init', () => {
       if (!silent) this.results.loading = true;
       try {
         const data = await api(`/discovery/searches/${this.search.id}/results`, {
-          query: { page, per_page: this.results.per_page, filter: this.resultFilter, sort: this.resultSort, ...this.analysisFilters, ...this.contactFilters },
+          query: { page, per_page: this.results.per_page, filter: this.resultFilter, sort: this.resultSort, ...this.analysisFilters, ...this.contactFilters, ...this.leadFilters },
         });
         this.results = { ...this.results, ...data, loading: false };
         this.watchAnalyses();
@@ -633,7 +714,7 @@ document.addEventListener('alpine:init', () => {
   }));
 
   Alpine.data('ubrProspects', () => ({
-    filters: { search: '', region: '', has_domain: '', verification: '', domain_status: '', min_relevance: '', min_opportunity: '', analysis: '', has_contact: '', contact_confidence: '', min_contact_score: '', pipeline_status: '', priority: '', owner: '', archived: '' },
+    filters: { search: '', region: '', has_domain: '', verification: '', domain_status: '', min_relevance: '', min_opportunity: '', analysis: '', has_contact: '', contact_confidence: '', min_contact_score: '', pipeline_status: '', priority: '', owner: '', archived: '', min_lead: '', lead_confidence: '', redesign: '', recommendation: '', no_blockers: '' },
     pollTimer: null,
     selected: [],
     exportBusy: false,
@@ -676,6 +757,7 @@ document.addEventListener('alpine:init', () => {
       window.addEventListener('ubr:contacts-queued', () => this.load(this.list.page));
       window.addEventListener('ubr:contacts-finished', () => this.load(this.list.page));
       window.addEventListener('ubr:pipeline-changed', () => this.load(this.list.page));
+      window.addEventListener('ubr:lead-changed', () => this.load(this.list.page));
       window.addEventListener('ubr:clickup-changed', () => setTimeout(() => this.load(this.list.page), 2500));
     },
 
@@ -696,7 +778,7 @@ document.addEventListener('alpine:init', () => {
         this.members = data.members || [];
         this.statuses = data.statuses || [];
         clearTimeout(this.pollTimer);
-        if (data.items.some((c) => ['queued', 'running'].includes(c.analysis?.status) || ['queued', 'running'].includes(c.contacts?.status))) this.pollTimer = setTimeout(() => this.load(this.list.page), 6000);
+        if (data.items.some((c) => ['queued', 'running'].includes(c.analysis?.status) || ['queued', 'running'].includes(c.contacts?.status) || c.lead?.pending)) this.pollTimer = setTimeout(() => this.load(this.list.page), 6000);
       } catch (e) {
         this.error = e.message;
         this.list.loading = false;

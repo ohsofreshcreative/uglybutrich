@@ -7,6 +7,7 @@ use App\Ubr\Domain\Companies\FitFlags;
 use App\Ubr\Domain\Discovery\RelevanceScorer;
 use App\Ubr\Domain\Verification\DomainStatus;
 use App\Ubr\Domain\Verification\VerificationStatus;
+use App\Ubr\Infrastructure\Http\UrlGuard;
 
 /**
  * Jednolity kształt danych firmy dla API (niezależny od widoków).
@@ -71,6 +72,7 @@ final class CompanyPresenter
 			'flags' => FitFlags::present(json_decode((string) ($r['fit_flags'] ?? ''), true) ?: []),
 			'analysis' => self::analysis($r),
 			'contacts' => ContactResearchService::summary($r),
+			'lead' => array_key_exists('li_status', $r) ? self::lead($r) : null,
 			'pipeline' => isset($r['pipeline_status']) ? [
 				'status' => $r['pipeline_status'],
 				'label' => \App\Ubr\Domain\Pipeline\PipelineCatalog::statusLabel($r['pipeline_status']),
@@ -81,8 +83,36 @@ final class CompanyPresenter
 				'next_action_at' => ! empty($r['next_action_at']) ? gmdate('c', strtotime($r['next_action_at'] . ' UTC')) : null,
 				'overdue' => ! empty($r['next_action_at']) && strtotime($r['next_action_at'] . ' UTC') < time(),
 				'archived' => ! empty($r['archived_at']),
-				'clickup_task_url' => $r['clickup_task_url'] ?? null,
+				'clickup_task_url' => UrlGuard::httpUrl($r['clickup_task_url'] ?? null),
 			] : null,
+		];
+	}
+
+	/**
+	 * Lead Intelligence na listach (z kolumn ubr_lead_intelligence dołączonych w zapytaniu — bez liczenia w żądaniu).
+	 *
+	 * @param array<string, mixed> $r
+	 * @return array<string, mixed>
+	 */
+	public static function lead(array $r): array
+	{
+		if ($r['li_status'] === null) {
+			return ['available' => false, 'pending' => true];
+		}
+
+		return [
+			'available' => true,
+			'pending' => (bool) $r['li_stale'],
+			'score' => $r['li_score'] !== null ? (int) $r['li_score'] : null,
+			'status' => $r['li_status'],
+			'confidence' => $r['li_confidence'],
+			'coverage' => (int) $r['li_coverage'],
+			'redesign' => $r['li_redesign'],
+			'redesign_label' => \App\Ubr\Domain\Lead\RedesignAssessor::LABELS[$r['li_redesign']] ?? $r['li_redesign'],
+			'recommendation' => $r['li_recommendation'],
+			'recommendation_label' => \App\Ubr\Domain\Lead\LeadRecommender::ACTIONS[$r['li_recommendation']] ?? $r['li_recommendation'],
+			'rank' => $r['li_rank'] !== null ? (float) $r['li_rank'] : null,
+			'blocker' => (bool) $r['li_blocker'],
 		];
 	}
 

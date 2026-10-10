@@ -59,19 +59,22 @@
 				<p class="mt-1 text-[11px] text-ink-muted" x-show="d.usage" x-text="'Limit organizacji: ' + d.usage.today + '/' + d.usage.per_day + ' dziś, ' + d.usage.month + '/' + d.usage.per_month + ' w miesiącu.'"></p>
 			</section>
 
+			{{-- Manual Website Review (Prompt 6) — ocena człowieka, nie pomiar --}}
+			@include('ubr.partials.manual-review', ['idExpr' => '$store.ubr.drawer.company?.id'])
+
 			{{-- 2. Website Preview --}}
 			<template x-if="a && Object.keys(a.screenshots || {}).length">
 				<section aria-labelledby="wa-preview">
 					<h3 id="wa-preview" class="text-[11px] font-bold uppercase tracking-wider text-ink-muted mb-2">Website Preview</h3>
 					<div class="flex gap-3 items-start">
 						<template x-if="a.screenshots.desktop">
-							<button type="button" class="flex-1 min-w-0 rounded-lg border border-line overflow-hidden hover:ring-2 hover:ring-gold/50 text-left" @click="$store.ubr.openPreview(c, 'desktop')" aria-label="Pełny podgląd: desktop">
+							<button type="button" class="flex-1 min-w-0 rounded-lg border border-line overflow-hidden hover:ring-2 hover:ring-gold/50 text-left" @click="$store.ubr.openPreview(c, 'desktop', 'screenshot')" aria-label="Pełny podgląd: desktop">
 								<img :src="a.screenshots.desktop.url" alt="Screenshot strony — desktop" class="w-full h-[220px] object-cover object-top" loading="lazy">
 								<span class="block px-2 py-1 text-[11px] text-ink-muted">Desktop 1440 px</span>
 							</button>
 						</template>
 						<template x-if="a.screenshots.mobile">
-							<button type="button" class="w-[130px] shrink-0 rounded-lg border border-line overflow-hidden hover:ring-2 hover:ring-gold/50 text-left" @click="$store.ubr.openPreview(c, 'mobile')" aria-label="Pełny podgląd: mobile">
+							<button type="button" class="w-[130px] shrink-0 rounded-lg border border-line overflow-hidden hover:ring-2 hover:ring-gold/50 text-left" @click="$store.ubr.openPreview(c, 'mobile', 'screenshot')" aria-label="Pełny podgląd: mobile">
 								<img :src="a.screenshots.mobile.url" alt="Screenshot strony — mobile" class="w-full h-[220px] object-cover object-top" loading="lazy">
 								<span class="block px-2 py-1 text-[11px] text-ink-muted">Mobile 390 px</span>
 							</button>

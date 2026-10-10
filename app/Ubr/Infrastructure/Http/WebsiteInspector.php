@@ -161,32 +161,49 @@ class WebsiteInspector
 	 */
 	private function fetch(string $url, int $timeout): array
 	{
-		$response = wp_safe_remote_get($url, [
-			'timeout' => $timeout,
-			'redirection' => 5,
-			'user-agent' => self::USER_AGENT,
-			'limit_response_size' => 600 * 1024,
-			'headers' => ['Accept' => 'text/html,application/xhtml+xml', 'Accept-Language' => 'pl,en;q=0.5'],
-		]);
+		// Przekierowania ręcznie, KAŻDY krok przez UrlGuard (jak PageFetcher). wp_safe_remote_get nie blokuje
+		// 169.254.0.0/16 (metadata chmury), 100.64.0.0/10 ani IPv6 i sprawdza tylko pierwszy rekord A.
+		$guard = app(UrlGuard::class);
+		$current = $url;
 
-		if (is_wp_error($response)) {
-			return ['code' => null, 'body' => '', 'final_url' => $url, 'error' => mb_substr($response->get_error_message(), 0, 250)];
+		for ($hop = 0; $hop <= 5; $hop++) {
+			$check = $guard->check($current);
+
+			if (! $check['ok']) {
+				return ['code' => null, 'body' => '', 'final_url' => $current, 'error' => 'Adres zablokowany (ochrona SSRF): ' . $check['reason']];
+			}
+
+			$unpin = PageFetcher::pin($current, $check['ips'] ?? []);
+			$response = wp_remote_get($current, [
+				'timeout' => $timeout,
+				'redirection' => 0,
+				'user-agent' => self::USER_AGENT,
+				'limit_response_size' => 600 * 1024,
+				'headers' => ['Accept' => 'text/html,application/xhtml+xml', 'Accept-Language' => 'pl,en;q=0.5'],
+			]);
+			$unpin();
+
+			if (is_wp_error($response)) {
+				return ['code' => null, 'body' => '', 'final_url' => $current, 'error' => mb_substr($response->get_error_message(), 0, 250)];
+			}
+
+			$code = (int) wp_remote_retrieve_response_code($response);
+			$location = (string) wp_remote_retrieve_header($response, 'location');
+
+			if ($code >= 300 && $code < 400 && $location !== '') {
+				$current = PageFetcher::absolute($location, $current);
+				continue;
+			}
+
+			return [
+				'code' => $code ?: null,
+				'body' => (string) wp_remote_retrieve_body($response),
+				'final_url' => $current,
+				'error' => null,
+			];
 		}
 
-		$final = $url;
-		$http = $response['http_response'] ?? null;
-
-		if ($http instanceof \WP_HTTP_Requests_Response) {
-			$raw = $http->get_response_object();
-			$final = isset($raw->url) && is_string($raw->url) ? $raw->url : $url;
-		}
-
-		return [
-			'code' => (int) wp_remote_retrieve_response_code($response) ?: null,
-			'body' => (string) wp_remote_retrieve_body($response),
-			'final_url' => $final,
-			'error' => null,
-		];
+		return ['code' => null, 'body' => '', 'final_url' => $current, 'error' => 'Zbyt wiele przekierowań.'];
 	}
 
 	/**

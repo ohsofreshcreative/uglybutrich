@@ -16,7 +16,7 @@ use App\Ubr\Infrastructure\Http\ProviderHttpClient;
  *
  * Licencja danych: ODbL (© OpenStreetMap contributors) — wymagana atrybucja w UI.
  * Strona WWW w OSM jest wprowadzana przez społeczność → pewność domeny: "uncertain",
- * podnoszona do "confirmed" dopiero po weryfikacji strony (WebsiteChecker).
+ * podnoszona do "confirmed" dopiero po weryfikacji strony (WebsiteInspector).
  */
 class OverpassProvider implements DiscoveryProvider
 {

@@ -4,11 +4,13 @@
 
 Rozmiar sugeruje (prawdopodobnie) klucz Ed25519 w formacie OpenSSH — należy go traktować jako **ujawniony** (każdy z dostępem do repozytorium lub jego kopii ma klucz prywatny).
 
+**Aktualizacja 10.10.2026 (na polecenie właściciela):** pliki `key` i `key.pub` usunięte z drzewa roboczego i z indeksu Git (`git rm key key.pub` w repozytorium LocalWP; zmiana przygotowana, **jeszcze nie zacommitowana i nie wypchnięta**). Zawartości nie odczytywano. Klucz nadal istnieje w historii Git (commit `9b24093`) i w `origin/main` — **nadal trzeba go unieważnić (krok 3)**; przepisanie historii (krok 5) tylko za zgodą.
+
 ## Plan (każdy krok wymaga decyzji właściciela)
 1. **Ustal, gdzie klucz jest używany** (bez unieważniania w ciemno): porównaj odcisk `ssh-keygen -lf key.pub` (lokalnie, u właściciela) z: GitHub → Settings → SSH keys i Deploy keys repozytoriów, `~/.ssh/authorized_keys` na serwerach (hosting, VPS, staging), panele hostingu (SFTP/SSH), CI/CD (sekrety GitHub Actions).
 2. **Wygeneruj nowy klucz poza repozytorium** (`ssh-keygen -t ed25519 -C "deploy uglybutrich"` w `~/.ssh/`), dodaj go we wszystkich miejscach z kroku 1, sprawdź logowanie nowym kluczem.
 3. **Unieważnij stary klucz** (usuń publiczną część ze wszystkich miejsc z kroku 1). Dopiero po tym kroku ryzyko jest usunięte.
-4. **Usuń pliki z bieżącego drzewa**: `git rm --cached key key.pub` + wpisy w `.gitignore` (już dodane: `key`, `key.pub`, `*.pem`, `id_rsa*`, `id_ed25519*`), commit.
+4. **[ZROBIONE 10.10.2026, bez commita] Usuń pliki z bieżącego drzewa**: `git rm --cached key key.pub` + wpisy w `.gitignore` (już dodane: `key`, `key.pub`, `*.pem`, `id_rsa*`, `id_ed25519*`), commit.
 5. **Historia Git (tylko za zgodą):** `git filter-repo --path key --path key.pub --invert-paths` (albo BFG), następnie `git push --force` na wszystkie gałęzie i tagi; poinformuj współpracowników o konieczności ponownego sklonowania; poproś GitHub Support o usunięcie zbuforowanych widoków, jeśli repozytorium było publiczne. Przepisanie historii nie unieważnia klucza — krok 3 jest obowiązkowy niezależnie.
 
 ## Zasada na przyszłość

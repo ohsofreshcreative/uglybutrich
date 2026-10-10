@@ -2,6 +2,7 @@
 
 namespace App\Ubr\Services;
 
+use App\Ubr\Support\Lock;
 use App\Ubr\Domain\Tenancy\Role;
 use App\Ubr\Domain\Tenancy\TenantContext;
 use App\Ubr\Infrastructure\ClickUp\ClickUpClient;
@@ -14,6 +15,7 @@ use App\Ubr\Infrastructure\Repositories\OrganizationRepository;
 use App\Ubr\Infrastructure\Repositories\PipelineRepository;
 use App\Ubr\Support\Redactor;
 use Throwable;
+use App\Ubr\Infrastructure\Http\UrlGuard;
 
 /**
  * Kolejka operacji ClickUp (ClickUpExportJob / ClickUpUpdateJob / ClickUpRuleEvaluationJob) — worker loopback
@@ -41,18 +43,20 @@ class ClickUpRunner
 	 */
 	public function tick(bool $chain = true, int $max = 5): array
 	{
-		if (! add_option('ubr_clickup_lock', time() + 120, '', false)) {
-			if ((int) get_option('ubr_clickup_lock') > time()) {
-				return ['processed' => 0, 'status' => null, 'remaining_due' => $this->repo->countDue()];
-			}
-
-			update_option('ubr_clickup_lock', time() + 120, false);
+		// Jeden worker ClickUp naraz (throttling API): blokada MySQL, atomowa i zwalniana po śmierci procesu.
+		if (! Lock::acquire('ubr_clickup_lock')) {
+			return ['processed' => 0, 'status' => null, 'remaining_due' => $this->repo->countDue()];
 		}
 
 		$processed = 0;
 		$status = null;
 
 		try {
+			// Zadania przerwane twardo po wyczerpaniu prób: create z eksportem „running” → UNKNOWN (bez duplikatu).
+			foreach ($this->repo->failExhausted(self::MAX_ATTEMPTS + 1) as $dead) {
+				$this->fail($dead, new ClickUpError(ClickUpError::NETWORK, 'Zadanie przerwane — proces workera został zakończony po kilku próbach.'));
+			}
+
 			while ($processed < $max && ($job = $this->repo->claim(90))) {
 				$processed++;
 
@@ -64,7 +68,7 @@ class ClickUpRunner
 				}
 			}
 		} finally {
-			delete_option('ubr_clickup_lock');
+			Lock::release('ubr_clickup_lock');
 		}
 
 		$due = $this->repo->countDue();
@@ -150,6 +154,15 @@ class ClickUpRunner
 			return $this->finish($job, 'cancelled', 'Eksport ma stan nieznany — wymaga rekoncyliacji.');
 		}
 
+		// Eksport wciąż „running” na początku próby = poprzedni worker przerwano (timeout, restart PHP) po wysłaniu
+		// lub w trakcie wysyłania POST. Zadanie mogło powstać — ponowny POST tworzyłby duplikat. Stan UNKNOWN.
+		if ($export['export_status'] === 'running') {
+			$message = 'Poprzednia próba eksportu została przerwana — zadanie mogło powstać. Sprawdź listę w ClickUp i rozstrzygnij w karcie firmy.';
+			$this->repo->updateExport((int) $export['id'], ['export_status' => 'unknown', 'last_error' => $message]);
+
+			return $this->finish($job, 'unknown', $message, ClickUpError::AMBIGUOUS);
+		}
+
 		$this->repo->updateExport((int) $export['id'], ['export_status' => 'running']);
 		$content = $this->builder->build($ctx, (int) $export['company_id'], (array) $connection['settings']);
 		$res = $this->client->createTask($token, (string) $export['list_id'], ['name' => $content['name'], 'markdown_content' => $content['markdown']], (int) $job['organization_id']);
@@ -165,7 +178,7 @@ class ClickUpRunner
 			return $this->handleError($job, $export, $connection, new ClickUpError(ClickUpError::AMBIGUOUS, 'ClickUp nie zwrócił identyfikatora zadania.'));
 		}
 
-		$url = mb_substr((string) ($res['data']['url'] ?? 'https://app.clickup.com/t/' . $taskId), 0, 255);
+		$url = mb_substr(UrlGuard::httpUrl($res['data']['url'] ?? null) ?? 'https://app.clickup.com/t/' . rawurlencode($taskId), 0, 255);
 		$this->repo->updateExport((int) $export['id'], ['export_status' => 'success', 'task_id' => $taskId, 'task_url' => $url, 'exported_at' => Db::now(), 'last_synced_at' => Db::now(), 'managed_hash' => $content['hash'], 'last_error' => null]);
 		$notes = $this->setFields($token, $taskId, $content['fields'], (int) $job['organization_id']);
 

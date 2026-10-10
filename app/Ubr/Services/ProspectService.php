@@ -32,6 +32,11 @@ class ProspectService
 			throw UbrException::notFound('Nie znaleziono firmy.');
 		}
 
+		// search_id tylko z wyszukiwań tej organizacji (inaczej zapis cudzego identyfikatora).
+		if ($searchId !== null && ! app(\App\Ubr\Infrastructure\Repositories\SearchRepository::class)->findForOrganization($searchId, $ctx->organizationId)) {
+			$searchId = null;
+		}
+
 		$result = $this->prospects->add($ctx->organizationId, $companyId, $ctx->userId, $searchId);
 		$pipeline = app(\App\Ubr\Infrastructure\Repositories\PipelineRepository::class);
 
@@ -47,6 +52,8 @@ class ProspectService
 			do_action('ubr/company/changed', $companyId, 'prospect_added', $ctx->organizationId);
 		}
 
+		app(PipelineService::class)->forgetStats($ctx->organizationId);
+
 		return $result;
 	}
 
@@ -54,14 +61,9 @@ class ProspectService
 	{
 		$this->assert($ctx, 'prospects.manage');
 
-		if (! $this->prospects->find($ctx->organizationId, $prospectId)) {
-			throw UbrException::notFound('Nie znaleziono prospekta.');
-		}
-
-		// Archiwizuje prywatny wpis organizacji — globalna firma, jej analizy, notatki i historia zostają.
-		if ($this->prospects->remove($ctx->organizationId, $prospectId, $ctx->userId) > 0) {
-			app(\App\Ubr\Infrastructure\Repositories\PipelineRepository::class)->event($ctx->organizationId, $prospectId, $ctx->userId, 'archived', null, null);
-		}
+		// Jedna ścieżka archiwizacji (jak POST /prospects/{id}/archive): zdarzenie pipeline, odświeżenie liczników
+		// Dashboard / Action Center i przeliczenie Lead Intelligence. Globalna firma, analizy i notatki zostają.
+		app(PipelineService::class)->archive($ctx, $prospectId);
 	}
 
 	/**
@@ -95,12 +97,16 @@ class ProspectService
 				'contact_confidence' => sanitize_key((string) ($query['contact_confidence'] ?? '')),
 				'contact_role' => sanitize_key((string) ($query['contact_role'] ?? '')),
 				'min_contacts' => (int) ($query['min_contacts'] ?? 0),
-			],
+			] + \App\Ubr\Infrastructure\Repositories\LeadFilters::fromQuery($query),
 			sanitize_key((string) ($query['sort'] ?? 'created_at')),
 			sanitize_key((string) ($query['dir'] ?? 'desc')),
 			$page,
 			$perPage
 		);
+
+		if (array_filter($data['items'], fn ($r) => ($r['li_status'] ?? null) === null || ! empty($r['li_stale']))) {
+			app(LeadIntelligenceRunner::class)->kick();
+		}
 
 		return [
 			'items' => app(ContactResearchService::class)->applyOrganizationView($ctx, array_map(fn ($r) => CompanyPresenter::row($r), $data['items'])),

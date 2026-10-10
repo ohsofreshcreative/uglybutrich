@@ -39,10 +39,58 @@ class UbrCommand
 	 */
 	public function install(): void
 	{
-		$result = app(Bootstrapper::class)->run();
+		$result = $this->runMigrations();
 		WP_CLI::log('Zastosowane migracje: ' . ($result['migrated'] ? implode(', ', $result['migrated']) : 'brak (aktualne)'));
 		WP_CLI::log(sprintf('Organizacja domyślna: #%d (%s)', $result['organization_id'], $result['created'] ? 'utworzona' : 'już istniała'));
 		$this->status();
+	}
+
+	/**
+	 * Migracje schematu podczas wdrożenia (zalecane na produkcji z `UBR_AUTO_MIGRATE=false`). Kod wyjścia ≠ 0 przy błędzie.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--status]
+	 * : Tylko pokaż wersję schematu, oczekujące migracje i ostatni błąd (bez zmian w bazie).
+	 *
+	 * ## EXAMPLES
+	 *
+	 *     wp ubr migrate --status
+	 *     wp ubr migrate
+	 */
+	public function migrate(array $args, array $assoc): void
+	{
+		$migrator = app(Migrator::class);
+
+		if (isset($assoc['status'])) {
+			WP_CLI::log(sprintf('Schemat: v%d (najnowsza v%d) — %s', $migrator->currentVersion(), $migrator->latestVersion(), $migrator->needsMigration() ? 'OCZEKUJĄ migracje' : 'aktualny'));
+			WP_CLI::log('Automatyczne migracje przy żądaniach WWW: ' . (defined('UBR_AUTO_MIGRATE') && ! constant('UBR_AUTO_MIGRATE') ? 'wyłączone (UBR_AUTO_MIGRATE=false)' : 'włączone'));
+			$error = $migrator->lastError();
+			WP_CLI::log('Ostatni błąd migracji: ' . ($error ? sprintf('%s (v%s): %s', gmdate('Y-m-d H:i', $error['at']), $error['version'] ?? '?', $error['message']) : 'brak'));
+
+			return;
+		}
+
+		$result = $this->runMigrations();
+		WP_CLI::success('Zastosowane migracje: ' . ($result['migrated'] ? implode(', ', $result['migrated']) : 'brak (schemat aktualny)') . sprintf(' — schemat v%d.', $migrator->currentVersion()));
+	}
+
+	/**
+	 * @return array{migrated: list<int>, organization_id: int, created: bool}
+	 */
+	private function runMigrations(): array
+	{
+		try {
+			$result = app(Bootstrapper::class)->run();
+		} catch (\Throwable $e) {
+			WP_CLI::error('Migracja nie powiodła się: ' . $e->getMessage() . ' — schemat v' . app(Migrator::class)->currentVersion() . '. Szczegóły w logu PHP; przywróć kopię bazy lub popraw przyczynę i uruchom ponownie.');
+		}
+
+		if (app(Migrator::class)->needsMigration()) {
+			WP_CLI::error('Migracje nie zostały zastosowane — trwa migracja w innym procesie (blokada). Spróbuj ponownie za chwilę.');
+		}
+
+		return $result;
 	}
 
 	/**
@@ -192,6 +240,10 @@ class UbrCommand
 	 * [--loop]
 	 * : Działaj w pętli (co 10 s) aż do Ctrl+C — przydatne lokalnie.
 	 *
+	 * [--all]
+	 * : Oprócz Discovery przetwórz po jednym kroku pozostałych kolejek: weryfikacja, analiza stron, decydenci,
+	 * ClickUp, Lead Intelligence. Zalecane z systemowego crona, gdy loopback HTTP jest zablokowany (hosting).
+	 *
 	 * @subcommand queue-work
 	 */
 	public function queueWork(array $args, array $assoc): void
@@ -212,6 +264,10 @@ class UbrCommand
 				$this->runToCompletion($id);
 			}
 
+			if (isset($assoc['all'])) {
+				$this->workOtherQueues();
+			}
+
 			if (! isset($assoc['loop'])) {
 				WP_CLI::success(sprintf('Przetworzono zadań: %d', count($ids)));
 				break;
@@ -219,6 +275,29 @@ class UbrCommand
 
 			sleep(10);
 		} while (true);
+	}
+
+	/**
+	 * Jeden krok każdej kolejki w tle (bez łańcuchowania przez loopback). Błąd jednej kolejki nie zatrzymuje pozostałych.
+	 */
+	private function workOtherQueues(): void
+	{
+		$steps = [
+			'weryfikacja' => fn () => app(\App\Ubr\Services\VerificationRunner::class)->tick(20, false),
+			'analiza stron' => fn () => app(\App\Ubr\Services\WebsiteAnalysisRunner::class)->tick(false),
+			'decydenci' => fn () => app(\App\Ubr\Services\ContactResearchRunner::class)->tick(false),
+			'ClickUp' => fn () => app(\App\Ubr\Services\ClickUpRunner::class)->tick(false),
+			'Lead Intelligence' => fn () => app(\App\Ubr\Services\LeadIntelligenceRunner::class)->tick(\App\Ubr\Services\LeadIntelligenceRunner::BATCH, false),
+		];
+
+		foreach ($steps as $label => $step) {
+			try {
+				$r = $step();
+				WP_CLI::log(sprintf('  %s: przetworzono %s', $label, (string) ($r['processed'] ?? 0)));
+			} catch (\Throwable $e) {
+				WP_CLI::warning(sprintf('  %s: błąd — %s', $label, mb_substr($e->getMessage(), 0, 200)));
+			}
+		}
 	}
 
 	/**

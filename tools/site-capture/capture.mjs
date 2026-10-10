@@ -102,17 +102,48 @@ function inCidr4(ip, cidr) {
 
 const PRIVATE_V4 = ['0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16', '172.16.0.0/12', '192.0.0.0/24', '192.0.2.0/24', '192.88.99.0/24', '192.168.0.0/16', '198.18.0.0/15', '198.51.100.0/24', '203.0.113.0/24', '224.0.0.0/4', '240.0.0.0/4'];
 
+/** Adres IPv6 → 16 bajtów (obsługa skrótu :: i osadzonego zapisu IPv4); null przy błędzie. */
+export function ipv6Bytes(ip) {
+  let v = ip.toLowerCase().replace(/^\[|\]$/g, '').split('%')[0];
+  const tail = v.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (tail) {
+    const o = tail[1].split('.').map(Number);
+    if (o.some((x) => x > 255)) return null;
+    v = v.slice(0, -tail[1].length) + ((o[0] << 8) | o[1]).toString(16) + ':' + ((o[2] << 8) | o[3]).toString(16);
+  }
+  const halves = v.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const rest = halves.length === 2 ? (halves[1] ? halves[1].split(':') : []) : [];
+  const fill = halves.length === 2 ? 8 - head.length - rest.length : 0;
+  const groups = [...head, ...Array(Math.max(fill, 0)).fill('0'), ...rest];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return groups.flatMap((g) => { const n = parseInt(g, 16); return [n >> 8, n & 0xff]; });
+}
+
 export function isPublicIp(ip) {
   if (net.isIPv4(ip)) return !PRIVATE_V4.some((c) => inCidr4(ip, c));
   if (net.isIPv6(ip)) {
-    const v = ip.toLowerCase();
-    const mapped = v.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isPublicIp(mapped[1]);
-    if (v === '::' || v === '::1') return false;
-    if (/^f[cd]/.test(v)) return false; // fc00::/7 unique local
-    if (/^fe[89ab]/.test(v)) return false; // fe80::/10 link-local
-    if (/^ff/.test(v)) return false; // multicast
-    if (/^(2001:db8|64:ff9b|100::)/.test(v)) return false;
+    // Analiza na bajtach — ten sam adres ma wiele zapisów (::ffff:127.0.0.1 = ::ffff:7f00:1; parser URL
+    // przeglądarki zawsze zamienia go na zapis szesnastkowy), więc regex na tekście daje się obejść.
+    const b = ipv6Bytes(ip);
+    if (!b) return false;
+    const v4 = (o) => `${b[o]}.${b[o + 1]}.${b[o + 2]}.${b[o + 3]}`;
+    const zero = (n) => b.slice(0, n).every((x) => x === 0);
+    if (zero(12)) return isPublicIp(v4(12)); // ::/96 (w tym :: i ::1)
+    if (zero(10) && b[10] === 0xff && b[11] === 0xff) return isPublicIp(v4(12)); // ::ffff:0:0/96
+    if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b) {
+      if (b.slice(4, 12).every((x) => x === 0)) return isPublicIp(v4(12)); // NAT64
+      return false; // 64:ff9b:1::/48 i pozostałe
+    }
+    if (b[0] === 0x20 && b[1] === 0x02) return isPublicIp(v4(2)); // 6to4
+    if ((b[0] & 0xfe) === 0xfc) return false; // fc00::/7
+    if (b[0] === 0xfe && (b[1] & 0xc0) === 0x80) return false; // fe80::/10
+    if (b[0] === 0xfe && (b[1] & 0xc0) === 0xc0) return false; // fec0::/10
+    if (b[0] === 0xff) return false; // multicast
+    if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x0d && b[3] === 0xb8) return false; // dokumentacja
+    if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x00 && b[3] === 0x00) return false; // Teredo
+    if (b[0] === 0x01 && b[1] === 0x00 && b.slice(2, 8).every((x) => x === 0)) return false; // 100::/64
     return true;
   }
   return false;
@@ -435,7 +466,7 @@ async function run(job) {
     headless: true,
     timeout: 20000,
     // Sandbox Chromium pozostaje włączony (bez --no-sandbox).
-    args: ['--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check', '--mute-audio', '--disable-extensions', '--disable-sync', '--disable-background-networking', '--disable-component-update', '--js-flags=--max-old-space-size=512'],
+    args: ['--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check', '--mute-audio', '--disable-extensions', '--disable-sync', '--disable-background-networking', '--disable-component-update', '--js-flags=--max-old-space-size=512', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'],
   });
   result.tool.browser = browser.version();
   const deadline = started + (job.timeoutMs || 75000);
@@ -458,6 +489,9 @@ async function run(job) {
         ignoreHTTPSErrors: false,
         userAgent: VIEWS[view].userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36 UglyButRichBot/0.3',
       });
+      // page.route() nie przechwytuje WebSocketów — blokujemy je wszystkie (analiza ich nie potrzebuje,
+      // a ws://127.0.0.1:port byłby obejściem ochrony SSRF).
+      if (typeof context.routeWebSocket === 'function') await context.routeWebSocket(/.*/, (ws) => ws.close());
       const page = await context.newPage();
       let violation = null;
       const collect = view === 'desktop';
@@ -632,28 +666,31 @@ async function check() {
   return info;
 }
 
-const arg = process.argv[2];
-const killer = setTimeout(() => {
-  out({ ok: false, errors: [{ stage: 'timeout', message: 'Przekroczono maksymalny czas działania komponentu.' }] });
-  process.exit(3);
-}, 110000);
+// Uruchomienie jako proces (PHP: node capture.mjs job.json). Import modułu w testach nie startuje przechwytywania.
+if (process.argv[1] && /capture\.mjs$/.test(process.argv[1])) {
+  const arg = process.argv[2];
+  const killer = setTimeout(() => {
+    out({ ok: false, errors: [{ stage: 'timeout', message: 'Przekroczono maksymalny czas działania komponentu.' }] });
+    process.exit(3);
+  }, 110000);
 
-try {
-  if (arg === '--check') {
-    out(await check());
-  } else {
-    const job = JSON.parse(readFileSync(arg, 'utf8'));
-    if (!job.axePath) {
-      try {
-        job.axePath = require.resolve('axe-core/axe.min.js');
-      } catch {}
+  try {
+    if (arg === '--check') {
+      out(await check());
+    } else {
+      const job = JSON.parse(readFileSync(arg, 'utf8'));
+      if (!job.axePath) {
+        try {
+          job.axePath = require.resolve('axe-core/axe.min.js');
+        } catch {}
+      }
+      out(await run(job));
     }
-    out(await run(job));
+    clearTimeout(killer);
+    process.exit(0);
+  } catch (e) {
+    clearTimeout(killer);
+    out({ ok: false, errors: [{ stage: 'fatal', message: String(e && e.message ? e.message : e).split('\n')[0].slice(0, 300) }] });
+    process.exit(2);
   }
-  clearTimeout(killer);
-  process.exit(0);
-} catch (e) {
-  clearTimeout(killer);
-  out({ ok: false, errors: [{ stage: 'fatal', message: String(e && e.message ? e.message : e).split('\n')[0].slice(0, 300) }] });
-  process.exit(2);
 }
