@@ -30,6 +30,8 @@ class UbrServiceProvider extends ServiceProvider
 		$this->app->singleton(TenantResolver::class);
 		$this->app->singleton(AsyncWorker::class);
 		$this->app->singleton(JobDispatcher::class);
+		// Prompt 10.5 — AI Outreach Assistant: przygotowane, domyślnie wyłączone (bez płatnych wywołań).
+		$this->app->bind(\App\Ubr\Services\Sequences\OutreachAssistant::class, \App\Ubr\Services\Sequences\DisabledOutreachAssistant::class);
 		$this->app->singleton(\App\Ubr\Infrastructure\Http\WebsiteInspector::class);
 	}
 
@@ -76,7 +78,23 @@ class UbrServiceProvider extends ServiceProvider
 		// Zdarzenia firm (dodanie do Prospects, weryfikacja, analiza, kontakty, zmiana statusu) → reguły ClickUp (tylko kolejka).
 		add_action('ubr/company/changed', fn ($companyId, $reason = '', $organizationId = null) => $this->safely(fn () => $this->app->make(\App\Ubr\Services\ClickUpRuleService::class)->trigger((int) $companyId, (string) $reason, $organizationId ? (int) $organizationId : null)), 10, 3);
 		add_action('wp_ajax_ubr_screenshot', fn () => $this->app->make(\App\Ubr\Http\ScreenshotEndpoint::class)->handle());
-		add_action(VerificationRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(VerificationRunner::class)->tick(20)));
+		add_action(VerificationRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(VerificationRunner::class)->tick()));
+		// Prompt 10.5 — sekwencje e-mail: zapasowe WP-Cron (główny tryb: cron serwera wp ubr queue-work --all) i rezygnacja odbiorcy.
+		add_action(\App\Ubr\Services\Sequences\SequenceRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(\App\Ubr\Services\Sequences\SequenceRunner::class)->tick()));
+		add_action('init', fn () => $this->app->make(\App\Ubr\Services\Sequences\UnsubscribeService::class)->handleRequest(), 5);
+		add_action(\App\Ubr\Services\WebsiteAgeRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(\App\Ubr\Services\WebsiteAgeRunner::class)->tick()));
+		// Prompt 10.4.3 — Website Age Intelligence w tle po analizie strony (Discover / ręczna), najniższy priorytet.
+		add_action('ubr/company/changed', function ($companyId, $reason = '') {
+			if ($reason === 'analysis_done') {
+				$this->safely(fn () => $this->app->make(\App\Ubr\Services\WebsiteAgeService::class)->queue((int) $companyId));
+			}
+		}, 40, 2);
+		// Prompt 10.4.3 — ETAP 2 ClickUp: po analizie decydenta aktualizacja tego samego zadania (przejęte firmy).
+		add_action('ubr/company/changed', function ($companyId, $reason = '') {
+			if ($reason === 'contacts_done') {
+				$this->safely(fn () => $this->app->make(\App\Ubr\Services\ClickUpExportService::class)->queueClaimUpdate((int) $companyId));
+			}
+		}, 45, 2);
 		add_action('wp_ajax_nopriv_' . AsyncWorker::PING_ACTION, fn () => $this->app->make(WorkerEndpoint::class)->ping());
 		add_action('wp_ajax_' . AsyncWorker::PING_ACTION, fn () => $this->app->make(WorkerEndpoint::class)->ping());
 		add_action(JobDispatcher::HOOK, fn ($searchId = 0) => $this->app->make(DiscoveryRunner::class)->tick((int) $searchId), 10, 2);
@@ -99,6 +117,10 @@ class UbrServiceProvider extends ServiceProvider
 			$this->safely(fn () => $this->app->make(\App\Ubr\Services\LeadIntelligenceRunner::class)->kick());
 			// Odblokowane telefony (Apollo): odbiór wyników zatwierdzonych zleceń (bez nowych zapytań płatnych).
 			$this->safely(fn () => $this->app->make(\App\Ubr\Services\ApolloPhoneRunner::class)->kick());
+			// Prompt 10.4.3: Website Age Intelligence (ustępuje weryfikacji).
+			$this->safely(fn () => $this->app->make(\App\Ubr\Services\WebsiteAgeRunner::class)->kick());
+			// Prompt 10.5: sekwencje e-mail (tylko gdy są wiadomości gotowe do wysłania).
+			$this->safely(fn () => $this->app->make(\App\Ubr\Services\Sequences\SequenceRunner::class)->kick());
 			// Prompt 10.4: usuwanie przeterminowanych wpisów wspólnej pamięci podręcznej stron (porcjami).
 			$this->safely(fn () => $this->app->make(\App\Ubr\Infrastructure\Http\PageCache::class)->purgeExpired(500));
 		});

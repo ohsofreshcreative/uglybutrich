@@ -42,6 +42,13 @@ enum Role: string
 		'contacts.reveal' => ['owner', 'admin'],
 		'integrations.view' => ['owner', 'admin', 'member'],
 		'integrations.manage' => ['owner', 'admin'],
+		// Prompt 10.5 — Sequences: pracownik — własne skrzynki, prywatne kampanie, sekwencje własnych firm i ich historia;
+		// owner/admin — wspólna biblioteka kampanii, sekwencje zespołu, ustawienia i limity modułu.
+		'sequences.view' => ['owner', 'admin', 'member'],
+		'sequences.manage' => ['owner', 'admin', 'member'],
+		'sequences.templates' => ['owner', 'admin'],
+		'sequences.team' => ['owner', 'admin'],
+		'sequences.settings' => ['owner', 'admin'],
 	];
 
 	public function can(string $ability): bool

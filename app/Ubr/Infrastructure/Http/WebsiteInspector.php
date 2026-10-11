@@ -117,6 +117,7 @@ class WebsiteInspector
 			'identifiers' => ['nip' => [], 'krs' => [], 'regon' => []],
 			'emails_same_domain' => 0,
 			'emails_other_domain' => 0,
+			'emails' => [],
 			'has_phone' => false,
 			'address_cities' => [],
 			'postal_codes' => [],
@@ -340,6 +341,15 @@ class WebsiteInspector
 
 				$this->sameSite($mailDomain, $domain) ? $result['emails_same_domain']++ : $result['emails_other_domain']++;
 			}
+
+			// Prompt 10.4.3 — adresy w domenie firmy (do wyboru ogólnego e-maila firmowego; nie zapisujemy ich listy).
+			foreach (array_unique(array_map('strtolower', $m[0])) as $address) {
+				if (count($result['emails']) < 20 && ! preg_match('/\.(png|jpg|jpeg|gif|webp|svg)$/', $address) && $this->sameSite(substr((string) strrchr($address, '@'), 1), $domain)) {
+					$result['emails'][] = $address;
+				}
+			}
+
+			$result['emails'] = array_values(array_unique($result['emails']));
 		}
 
 		if (preg_match('/(\+48[\s\-]?)?\(?\d{2}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b|\b\d{3}[\s\-]\d{3}[\s\-]\d{3}\b/', $text)) {

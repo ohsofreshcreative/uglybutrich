@@ -4,6 +4,7 @@ namespace App\Ubr\Services;
 
 use App\Ubr\Domain\Companies\CompanyNormalizer as N;
 use App\Ubr\Domain\Companies\Confidence;
+use App\Ubr\Domain\Contacts\GeneralEmailPicker;
 use App\Ubr\Domain\Discovery\CityCatalog;
 use App\Ubr\Domain\Discovery\RegionCatalog;
 use App\Ubr\Domain\Verification\CompanyStatusDecider;
@@ -425,6 +426,20 @@ class CompanyVerifier
 			'identifiers_on_website' => $identifiers,
 			'records' => array_map(fn ($h) => $h['record']->toArray() + ['origin' => $h['origin'], 'name_score' => $h['score'], 'domain_match' => $h['domain_match']], $decision['entity']),
 		];
+
+		// Prompt 10.4.3 — ogólny e-mail firmowy ze stron pobranych przy weryfikacji (bez dodatkowych zapytań). Nie dla domeny
+		// innego podmiotu; brak adresu na stronie nie usuwa wcześniej zapisanego.
+		if ($site && ($domainDecision['status'] ?? '') !== DomainStatus::MISMATCH && ! empty($site['emails'])) {
+			$general = GeneralEmailPicker::pick((array) $site['emails'], (string) ($site['final_domain'] ?: $company['domain']));
+
+			if ($general) {
+				$update += [
+					'general_email' => $general,
+					'general_email_source' => mb_substr((string) ($site['final_url'] ?: $company['website_url']), 0, 500),
+					'general_email_at' => $now,
+				];
+			}
+		}
 
 		$update += [
 			'verification_status' => $decision['status'],

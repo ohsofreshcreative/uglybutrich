@@ -80,7 +80,7 @@ class ContactResearchService
 				continue;
 			}
 
-			$reason = $this->skipReason($company, $force, $limits);
+			$reason = $this->blockedReason($ctx->organizationId, $company) ?? $this->skipReason($company, $force, $limits);
 
 			if ($reason) {
 				$skipped[] = ['company_id' => $id, 'name' => $company['name'], 'reason' => $reason['code'], 'message' => $reason['message']];
@@ -110,7 +110,7 @@ class ContactResearchService
 			$this->runner->kick();
 		}
 
-		$labels = ['not_found' => 'firma niedostępna', 'no_sources' => 'brak źródeł (bez KRS i strony WWW)', 'in_progress' => 'wyszukiwanie już trwa', 'fresh' => 'aktualne wyniki (< 30 dni)', 'cooldown' => 'wyszukiwano niedawno (< 24 h)'];
+		$labels = ['blocked' => 'zakaz kontaktu lub firma zablokowana', 'not_found' => 'firma niedostępna', 'no_sources' => 'brak źródeł (bez KRS i strony WWW)', 'in_progress' => 'wyszukiwanie już trwa', 'fresh' => 'aktualne wyniki (< 30 dni)', 'cooldown' => 'wyszukiwano niedawno (< 24 h)'];
 		$summary = [];
 
 		foreach ($skipped as $s) {
@@ -122,6 +122,205 @@ class ContactResearchService
 			'skipped' => $skipped,
 			'message' => trim(sprintf('Zlecono wyszukiwanie decydentów: %d.', count($queued)) . ($summary ? ' Pominięto: ' . implode(', ', array_map(fn ($k, $n) => ($labels[$k] ?? $k) . ' (' . $n . ')', array_keys($summary), $summary)) . '.' : '')),
 			'usage' => $this->limits->usage($ctx->organizationId),
+		];
+	}
+
+	/** Statusy analizy decydenta po przejęciu firmy (Prompt 10.4.3). */
+	public const CLAIM_LABELS = [
+		'pending' => 'Oczekuje na analizę',
+		'people' => 'Szukamy decydenta',
+		'found' => 'Znaleziono decydenta',
+		'phones' => 'Szukamy numeru telefonu',
+		'direct' => 'Znaleziono numer bezpośredni',
+		'no_phone' => 'Znaleziono decydenta bez telefonu',
+		'none' => 'Nie znaleziono decydenta',
+		'review' => 'Wymaga ręcznej weryfikacji',
+		'failed' => 'Błąd analizy',
+		'blocked' => 'Analiza wstrzymana (zakaz kontaktu / firma zablokowana)',
+		'not_started' => 'Nie uruchomiono',
+	];
+
+	/** Dzienny limit analiz decydentów uruchamianych przejęciem firmy (UBR_CLAIM_RESEARCH_PER_DAY, domyślnie 100). */
+	public static function claimDailyLimit(): int
+	{
+		return max(0, (int) apply_filters('ubr/contacts/claim_per_day', defined('UBR_CLAIM_RESEARCH_PER_DAY') ? (int) constant('UBR_CLAIM_RESEARCH_PER_DAY') : 100));
+	}
+
+	/**
+	 * Zakaz kontaktu w organizacji (DO_NOT_CONTACT), firma oznaczona „nie pasuje” albo nieaktywna / zawieszona w rejestrze
+	 * → bez automatycznej analizy kontaktów.
+	 *
+	 * @param array<string, mixed> $company
+	 * @return array{code: string, message: string}|null
+	 */
+	public function blockedReason(int $organizationId, array $company): ?array
+	{
+		$db = app(\App\Ubr\Infrastructure\Database\Db::class);
+		$p = $db->row("SELECT do_not_contact, status, qualification, archived_at FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::PROSPECTS)} WHERE organization_id = %d AND company_id = %d", $organizationId, (int) $company['id']);
+		$dnc = $p && ! $p['archived_at'] && ((int) $p['do_not_contact'] === 1 || $p['status'] === 'not_a_fit' || $p['qualification'] === 'not_a_fit');
+
+		if ($dnc || in_array((string) ($company['verification_status'] ?? ''), ['inactive', 'suspended'], true)) {
+			return ['code' => 'blocked', 'message' => $dnc ? 'Firma ma zakaz kontaktu lub oznaczenie „nie pasuje” — bez analizy kontaktów.' : 'Firma nieaktywna lub zawieszona w rejestrze — bez analizy kontaktów.'];
+		}
+
+		return null;
+	}
+
+	/**
+	 * Prompt 10.4.3 — analiza decydenta zlecana przejęciem firmy (w tle; pracownik nie czeka).
+	 * - jedna aktywna analiza na firmę (blokada na czas sprawdzenia i utworzenia — podwójne kliknięcie / dwóch pracowników),
+	 * - zakończona aktualna analiza NIE jest powtarzana (wyniki wykorzystane od razu); „Ponów” z ograniczeniem 1 h,
+	 * - bez analizy dla firm BLOCKED / DO_NOT_CONTACT, osobny limit dzienny, bez limitu „1 aktywne wyszukiwanie
+	 *   organizacji” (przejęcia kilku pracowników trafiają do wspólnej kolejki),
+	 * - Apollo: wyłącznie zapisane wyniki (DecisionMakerFinderService, trigger `claim`).
+	 *
+	 * @return array{queued: bool, reason: ?string, message: string, run_id?: int}
+	 */
+	public function requestForClaim(TenantContext $ctx, int $companyId, bool $retry = false): array
+	{
+		$company = $this->companies->find($companyId);
+		$no = fn (string $reason, string $message) => ['queued' => false, 'reason' => $reason, 'message' => $message];
+
+		if (! $company || ! $this->companies->isVisibleTo($companyId, $ctx->organizationId)) {
+			return $no('not_found', 'Nie znaleziono firmy.');
+		}
+
+		if (! $ctx->can('contacts.run') && ! $ctx->can('prospects.manage')) {
+			return $no('forbidden', 'Brak uprawnienia do analizy kontaktów.');
+		}
+
+		if ($blocked = $this->blockedReason($ctx->organizationId, $company)) {
+			return $no($blocked['code'], $blocked['message']);
+		}
+
+		$lock = 'ubr_claim_dm_' . $companyId;
+
+		if (! \App\Ubr\Support\Lock::acquire($lock)) {
+			return $no('in_progress', 'Analiza decydenta tej firmy już jest zlecana.');
+		}
+
+		try {
+			if ($this->runs->activeForCompany($companyId)) {
+				return $no('in_progress', 'Analiza decydenta tej firmy już trwa.');
+			}
+
+			$limits = ContactLimits::limits($ctx->organizationId);
+			$latest = $this->runs->latestForCompany($companyId, true);
+			$age = $latest && $latest['finished_at'] ? time() - strtotime($latest['finished_at'] . ' UTC') : null;
+			$current = $latest && ($latest['research_version'] ?? '') === DecisionMakerFinderService::RESEARCH_VERSION && $latest['status'] !== 'failed';
+
+			if (! $retry && $current && $age !== null && $age < $limits['fresh_days'] * DAY_IN_SECONDS) {
+				return $no('fresh', 'Analiza decydenta jest aktualna — wykorzystano zapisane wyniki.');
+			}
+
+			$cooldown = (int) apply_filters('ubr/contacts/claim_retry_minutes', defined('UBR_CLAIM_RETRY_COOLDOWN_MINUTES') ? (int) constant('UBR_CLAIM_RETRY_COOLDOWN_MINUTES') : 60);
+
+			// Czas ochronny liczony od OSTATNIEJ analizy w dowolnym stanie (także zakończonej błędem — wtedy krócej, maks. 10 min),
+			// żeby „Ponów” nie uruchamiało serii analiz po szybkich niepowodzeniach.
+			$last = $this->runs->latestForCompany($companyId);
+			$lastAt = $last ? ($last['finished_at'] ?: $last['updated_at']) : null;
+			$lastAge = $lastAt ? time() - strtotime($lastAt . ' UTC') : null;
+			$cooldownMinutes = $last && $last['status'] === 'failed' ? min($cooldown, 10) : $cooldown;
+
+			if ($retry && $lastAge !== null && $lastAge < $cooldownMinutes * MINUTE_IN_SECONDS) {
+				return $no('cooldown', 'Ponowne wyszukiwanie możliwe po ' . $cooldownMinutes . ' min od poprzedniego.');
+			}
+
+			$hasSite = ! empty($company['domain']) && ! empty($company['website_url']) && ($company['domain_status'] ?? '') !== 'mismatch';
+			$saved = (int) app(\App\Ubr\Infrastructure\Database\Db::class)->value('SELECT COUNT(*) FROM ' . app(\App\Ubr\Infrastructure\Database\Db::class)->table(\App\Ubr\Infrastructure\Database\Tables::APOLLO_PEOPLE) . ' WHERE company_id = %d', $companyId);
+
+			if (! $hasSite && empty($company['krs']) && $saved === 0) {
+				return $no('no_sources', 'Brak źródeł: firma nie ma numeru KRS, zgodnej strony WWW ani zapisanych danych Apollo.');
+			}
+
+			$today = (int) app(\App\Ubr\Infrastructure\Database\Db::class)->value('SELECT COUNT(*) FROM ' . app(\App\Ubr\Infrastructure\Database\Db::class)->table(\App\Ubr\Infrastructure\Database\Tables::CONTACT_RUNS) . " WHERE organization_id = %d AND trigger_type = 'claim' AND created_at >= %s", $ctx->organizationId, gmdate('Y-m-d 00:00:00'));
+
+			if ($today >= self::claimDailyLimit()) {
+				return $no('limit', 'Dzienny limit analiz decydentów po przejęciu wyczerpany — ponów jutro.');
+			}
+
+			$runId = $this->runs->create([
+				'company_id' => $companyId,
+				'organization_id' => $ctx->organizationId,
+				'user_id' => $ctx->userId,
+				'trigger_type' => 'claim',
+				'stage' => 'queued',
+				'research_version' => DecisionMakerFinderService::RESEARCH_VERSION,
+			]);
+			$this->companies->update($companyId, ['contacts_status' => 'queued']);
+		} finally {
+			\App\Ubr\Support\Lock::release($lock);
+		}
+
+		$this->runner->kick();
+
+		return ['queued' => true, 'reason' => null, 'message' => 'Analiza decydenta zlecona w tle.', 'run_id' => $runId];
+	}
+
+	/**
+	 * Status analizy decydenta w karcie przejętej firmy: etap, najlepszy decydent, numery, źródła, pewność, data.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public function claimStatus(TenantContext $ctx, int $companyId): array
+	{
+		$company = $this->companies->find($companyId);
+
+		if (! $company || ! $this->companies->isVisibleTo($companyId, $ctx->organizationId)) {
+			throw UbrException::notFound('Nie znaleziono firmy.');
+		}
+
+		$active = $this->runs->activeForCompany($companyId);
+		$latest = $active ?? $this->runs->latestForCompany($companyId);
+		$view = $this->forCompany($ctx, $companyId);
+		$top = $view['top'][0] ?? null;
+		$top = $top && (int) ($top['rank_position'] ?? 0) === 1 ? $top : null;
+		$lead = app(ClickUpTaskBuilder::class)->leadValues($ctx, $company, $view);
+		$blocked = $this->blockedReason($ctx->organizationId, $company);
+		$direct = null;
+
+		if ($top) {
+			$links = app(\App\Ubr\Infrastructure\Repositories\ContactPhoneLinkRepository::class)->effectiveFor($ctx->organizationId, [(int) $top['id']])[(int) $top['id']] ?? [];
+			$best = $links[0] ?? null;
+
+			if ($best && in_array($best['link_status'], ['VERIFIED', 'LIKELY'], true)) {
+				$direct = ['number' => \App\Ubr\Domain\Phones\PhoneNumber::format((string) $best['e164']), 'e164' => (string) $best['e164'], 'status' => $best['link_status'], 'status_label' => \App\Ubr\Domain\Phones\PersonPhoneExtractor::STATUS_LABELS[$best['link_status']] ?? $best['link_status'], 'source_url' => UrlGuard::httpUrl($best['source_url'] ?? null), 'confirmed' => $best['link_status'] === 'VERIFIED'];
+			}
+		}
+
+		$key = match (true) {
+			$blocked !== null && ! $latest => 'blocked',
+			! $latest => 'not_started',
+			$latest['status'] === 'queued' => 'pending',
+			$latest['status'] === 'running' => ($latest['stage'] ?? '') === 'phones' ? 'phones' : 'people',
+			$latest['status'] === 'failed' => 'failed',
+			// Kandydaci bez Top 1 (np. tylko z Apollo, bez potwierdzenia) → do weryfikacji, nie „nie znaleziono”.
+			$top === null => (int) ($view['count'] ?? 0) > 0 ? 'review' : 'none',
+			! in_array($top['verification']['status'] ?? '', ['verified', 'probable'], true) || ! empty($top['company_match_uncertain']) => 'review',
+			$direct !== null && $direct['confirmed'] => 'direct',
+			$direct !== null => 'review',
+			default => 'no_phone',
+		};
+
+		return [
+			'key' => $key,
+			'label' => self::CLAIM_LABELS[$key],
+			'active' => $active !== null,
+			'blocked' => $blocked,
+			'decision_maker' => $top ? [
+				'id' => (int) $top['id'],
+				'name' => $top['full_name'],
+				'title' => $top['job_title'],
+				'verification' => $top['verification'],
+				'confidence' => $top['confidence']['label'] ?? null,
+				'sources' => array_map(fn ($src) => ['label' => $src['label'] ?? '', 'url' => $src['url'] ?? null], (array) ($top['sources'] ?? [])),
+			] : null,
+			'direct_phone' => $direct,
+			'company_phone' => $lead['contact_number'] ? \App\Ubr\Domain\Phones\PhoneNumber::format((string) $lead['contact_number']) : null,
+			'general_email' => $lead['lead_email'],
+			'last_run_at' => $latest && ($latest['finished_at'] ?? null) ? gmdate('c', strtotime($latest['finished_at'] . ' UTC')) : null,
+			'trigger' => $latest['trigger_type'] ?? null,
+			'can_retry' => $blocked === null && $active === null && ($ctx->can('contacts.run') || $ctx->can('prospects.manage')),
 		];
 	}
 

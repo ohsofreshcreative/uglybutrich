@@ -135,10 +135,8 @@ class DiscoveryService
 
 		$data = $this->results->paginate($id, $ctx->organizationId, max(1, $page), max(1, min(100, $perPage)), $filter, $sort, $extra + ['user_id' => $ctx->userId]);
 
-		// Firmy bez aktualnej oceny Lead Intelligence → przeliczenie w tle (bez liczenia w tym żądaniu).
-		if (array_filter($data['items'], fn ($r) => ($r['li_status'] ?? null) === null || ! empty($r['li_stale']))) {
-			app(LeadIntelligenceRunner::class)->kick();
-		}
+		// Prompt 10.4.3 — wyświetlenie listy nie zleca przeliczeń Lead Intelligence (oceny liczy proces w tle: Discovery,
+		// zmiana danych firmy, healthcheck). Paginacja, filtry i sortowanie tylko prezentują zapisane wyniki.
 
 		$out = [
 			'items' => app(CallPresenter::class)->attach($ctx, app(ContactResearchService::class)->applyOrganizationView($ctx, array_map(fn ($r) => CompanyPresenter::row($r), $data['items'])), $data['items']),

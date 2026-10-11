@@ -28,9 +28,13 @@
 				</select>
 			</div>
 			<div class="w-full min-[480px]:w-[170px]">
-				<label class="ubr-label" for="p-per">Na stronę</label>
-				<select id="p-per" class="ubr-input" x-model.number="list.per_page" @change="load(1)">
-					<option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option>
+				<label class="ubr-label" for="p-per">Wyników na stronie:</label>
+				{{-- Paginacja po stronie serwera; wybór zapamiętany lokalnie osobno dla Prospects --}}
+				<select id="p-per" class="ubr-input" data-per-page @change="setPerPage($event.target.value)">
+					<option value="10" :selected="list.per_page === 10">10</option>
+					<option value="25" :selected="list.per_page === 25">25</option>
+					<option value="50" :selected="list.per_page === 50">50</option>
+					<option value="100" :selected="list.per_page === 100">100</option>
 				</select>
 			</div>
 				<button type="button" class="ubr-btn-ghost h-10" @click="moreFilters = !moreFilters" :aria-expanded="moreFilters" aria-controls="p-more-filters">

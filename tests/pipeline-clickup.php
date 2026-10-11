@@ -109,7 +109,7 @@ ubrt_rest($uM, 'POST', '/prospects', ['company_id' => $plB]);
 ubrt_rest($uM, 'POST', '/prospects', ['company_id' => $plC]);
 $board = ubrt_rest($uM, 'GET', '/pipeline/board', ['per_column' => 5]);
 $cols = array_column($board['data']['columns'], null, 'key');
-UbrT::ok(count($cols) === 10 && $cols['new']['total'] >= 2 && $cols['to_contact']['total'] >= 1, '11. tablica: 10 kolumn statusów z licznikami');
+UbrT::ok(count($cols) === 11 && $cols['new']['total'] >= 2 && $cols['to_contact']['total'] >= 1, '11. tablica: 11 kolumn statusów z licznikami (w tym Mailing, Prompt 10.5)');
 $page = ubrt_rest($uM, 'GET', '/pipeline/board', ['status' => 'new', 'offset' => 1, 'per_column' => 5]);
 UbrT::ok(count($page['data']['columns']) === 1 && count($page['data']['columns'][0]['items']) === $cols['new']['total'] - 1, '11. doładowanie kolumny (offset) — lazy load');
 $f = ubrt_rest($uM, 'GET', '/pipeline/board', ['priority' => 'urgent']);

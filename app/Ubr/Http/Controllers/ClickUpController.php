@@ -63,6 +63,12 @@ class ClickUpController
 		return $this->destinations->saveSettings($this->tenants->require('clickup.connect'), (array) $request->get_json_params());
 	}
 
+	/** Prompt 10.4.3 — zadania ClickUp po „Przejmij firmę” (ustawienie organizacji, owner / admin). */
+	public function saveClaimSync(WP_REST_Request $request): array
+	{
+		return app(\App\Ubr\Services\ClickUpExportService::class)->saveClaimSync($this->tenants->require('organization.update'), (array) $request->get_json_params());
+	}
+
 	public function export(WP_REST_Request $request): WP_REST_Response
 	{
 		$ids = (array) ($request->get_param('company_ids') ?? []);

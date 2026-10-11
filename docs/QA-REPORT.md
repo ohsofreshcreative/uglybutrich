@@ -477,3 +477,84 @@ strony — 08:13 UTC). Pliki: **PASSED** — przed kopiowaniem kontrola rozbież
 zmian 10.3 nie nadpisano), po kopiowaniu 572/572 plików motywu (app, resources, routes, tests, docs, config, public/build) zgodnych
 sumą MD5 z kontenerem. Migracje M012 i M013 wykonają się automatycznie przy pierwszym wejściu na stronę — niezweryfikowane (NOT TESTED).
 Widoki 1920/1440/1280/768/390, workery, statusy etapów i pomiary na LocalWP — NOT TESTED.
+
+## 15. Wyników na stronie — Discover i Prospects (11.10.2026)
+
+Wszystkie testy wykonano w kontenerze (dane testowe: 120 firm / 110 Prospects, usunięte po testach). LocalWP: NOT TESTED (strona niedostępna).
+
+| Test | Wynik | Status |
+|---|---|---|
+| JS: wartości dozwolone, domyślne 25, osobne klucze, zablokowany storage | 31/31 | PASSED |
+| Discover 10 → 25 → 50 → 100: liczba wierszy, strona 1, paginacja przeliczona, jedno zapytanie `GET …/results?page=1&per_page=N` z filtrem i sortowaniem, brak zapytań wyszukiwania / weryfikacji / analizy / decydentów / Apollo | 4 × 4 | PASSED |
+| Prospects 10 → 25 → 50 → 100: jw., brak zapytań zapisujących | 4 × 4 | PASSED |
+| Zapamiętywanie po przeładowaniu, niezależnie dla list; zmanipulowana wartość → 25 | ✓ | PASSED |
+| Zmiana statusu firmy w tle przy 100 wierszach: lekkie odświeżenie (ids ≤ 100), bez pobierania całej listy | ✓ | PASSED |
+| 1920 / 1440 / 1280 / 768 / 390: bez poziomego przewijania, wybór widoczny, brak błędów JS | 40/40 | PASSED |
+| Regresja PHP / E2E P10.4 / P10 / P10.2 / P10.3 | 1222/1222 · 58/58 · 71/71 · 55/55 · 76/76 | PASSED |
+
+Uwaga (stan po 10.4.3): wczytanie listy NIE zleca już przeliczeń Lead Intelligence — przeliczenie po zmianie danych firmy i po zakończeniu wyszukiwania (§16). Większa strona (np. 100 wierszy) może zlecić przeliczenie dla większej liczby firm.
+
+## 16. Prompt 10.4.3 — Discover + Website Age Intelligence + „Przejmij firmę” + ClickUp Auto-Sync (11.10.2026)
+
+Wszystkie testy w kontenerze; Internet Archive, ClickUp, Apollo i strony firm **mockowane** (wyniki nie są pomiarami produkcyjnymi).
+Bez zapytań do produkcyjnego ClickUp, bez płatnych zapytań Apollo, bez deploymentu i Git Push.
+
+| Test | Wynik | Status |
+|---|---|---|
+| PHP `tests/run.php` (pełna regresja) | **1337/1337** (+115 w `tests/discover-claim-p1043.php`) | PASSED (kontener) |
+| Website Age: odcisk / porównanie (treść ≠ redesign, drobne zmiany = minor, inny motyw = major, za mało cech = niepewne), poszlaki techniczne, oszacowanie (nowa strona na starej domenie, stara bez redesignu, kilka redesignów, brak historii, archiwum niedostępne, sprzeczne dane), kolejka (cache, timeout, 503 → 3 próby, strona nieosiągalna, ustępowanie weryfikacji, filtry, limit zapytań) | ✓ | PASSED (mock) |
+| Discover: e-mail ogólny (bez osobowych / noreply / spoza domeny), telefon z tych samych stron, Opportunity Score w tle (trigger auto), brak DM / Apollo, LI bez list | ✓ | PASSED (mock) |
+| Przejęcie: przypisanie, analiza w tle, podwójne kliknięcie, drugi pracownik 409, BLOCKED / DNC (także ręcznie), błąd kolejki nie cofa przejęcia, statusy, „Ponów” (czas ochronny, także po błędzie), zapisane Apollo bez płatnych zapytań, zamaskowane nazwiska pominięte | ✓ | PASSED (mock) |
+| ClickUp: domyślnie wyłączone (przejęcie bez zadania, „Wyłączone” w karcie, włącza tylko owner/admin — member 403), propozycja mapowania i brakujące pole (bez tworzenia), etap 1 i 2 w tym samym zadaniu, Decision maker phone tylko z potwierdzonym powiązaniem, ochrona ręcznych zmian + konflikt w karcie, brak duplikatów, timeout → reconcile po `ubr-ref`, ponowne utworzenie raz, 500 → retry, brak mapowania pracownika | ✓ | PASSED (mock API) |
+| JS: `claim.test.mjs` (komunikat po przejęciu, tony, odpytywanie tylko w toku, ponowienie bez duplikatów) | 35/35 | PASSED |
+| JS regresja | 18/18 · 31/31 · 5/5 · 19/19 · 35/35 | PASSED |
+| Playwright P10.4.3 (Discover: etapy e-mail / wiek / decydent, filtr wieku bez zleceń; przejęcie z komunikatem; karta: panel decydenta + ClickUp, odpytywanie co 5 s, Website Age z dowodami, „Sprawdź ponownie” z czasem ochronnym, „Ponów” — jedno żądanie; Settings → ClickUp: przełącznik „Zadania po przejęciu” (fikcyjna konfiguracja OAuth, bez zapytań do ClickUp); 1920 / 1440 / 1280 / 768 / 390 bez poziomego przewijania) | **82/82** | PASSED (kontener) |
+| Playwright regresja P10.4 / P10 / P10.2 / P10.3 / wyników na stronie | 58/58 · 71/71 · 55/55 · 76/76 · 95/95 | PASSED (kontener) |
+| LocalWP | — | zob. 16.2 |
+| Produkcja (Hostinger) | — | zob. 16.2 |
+
+### 16.1 Propozycja wag Opportunity Score (NIE wdrożona — wymaga zgody)
+Obecnie wiek strony nie wpływa na Opportunity Score. Propozycja: nowe kryterium A „Wiek projektu” 5 pkt w ramach A (45),
+kosztem „Design (AI)” 15 → 12 i „Treść” 5 → 3 (rok w stopce już częściowo w treści). Punktacja: OUTDATED ≥ 10 lat (pewność
+HIGH/MEDIUM) 5, OUTDATED 7–9 lat 4, AGING 2, CURRENT/NEW 0, UNKNOWN lub LOW = nieocenione (0 pkt, niższe pokrycie).
+Przykład (ilustracyjny): strona z projektem od 2012 (bez AI Vision) +5 pkt i −2 pkt z treści → ok. +3; nowy projekt 2024 → ok. −2.
+
+### 16.2 LocalWP i produkcja
+<!-- P1043-ENV -->
+**Pliki LocalWP — PASSED (11.10.2026):** kontrola rozbieżności przed kopiowaniem (stan na LocalWP = wdrożenie 10.4; jedyna różnica
+— `docs/QA-REPORT.md` bez treści spoza kontenera), skopiowano 66 plików, po kopiowaniu 590/590 plików motywu zgodnych sumą MD5 z kontenerem.
+**Walidacja LocalWP — BLOCKED:** strona nie działa (ostatni wpis w logu PHP strony 08:13 UTC) — migracja M014, widoki, workery NOT TESTED.
+**Paczka dla Hostingera:** `Websites/ubr-deploy/uglybutrich-p1043.zip` (6497 plików, z `vendor/`, bez `node_modules`, `.git`, `deploy/`,
+`key`, `key.pub`, `*.sql`). **Produkcja — NOT TESTED** (paczka nie została jeszcze wgrana; po wgraniu: test tylko do odczytu, bez nowych
+wyszukiwań Apollo; M014 wykona się automatycznie).
+
+## 17. Prompt 10.5 — Sequences (11.10.2026)
+
+Wszystkie testy w kontenerze. Wysyłka wyłącznie przez mock transportu, transport testowy albo lokalny testowy serwer SMTP
+(`tests/tools/fake_smtp.py`, 127.0.0.1) — **żadna wiadomość nie wyszła poza kontener**. Bez deploymentu, Git Push, płatnych API
+i zmian w ClickUp. LocalWP / produkcja — zob. 17.1.
+
+| Test | Wynik | Status |
+|---|---|---|
+| PHP `tests/run.php` (pełna regresja) | **1450/1450** (+113 w `tests/sequences-p105.php`) | PASSED (kontener) |
+| Biblioteka: tworzenie (wspólna tylko owner/admin, prywatna pracownika), edycja, dodanie / usunięcie / kolejność kroków, wersje, duplikat, archiwizacja, podgląd z terminami, widoczność prywatnych | ✓ (1–8) | PASSED |
+| Przypisanie: szkic (kopia), edycja 1. i 2. wiadomości, odstęp, dodanie / usunięcie kroku, szablon bez zmian, nowa firma dostaje oryginał, zmiana szablonu bez wpływu na aktywną sekwencję | ✓ (9–18) | PASSED |
+| Skrzynki: podłączenie (hasło szyfrowane, nigdy w odpowiedzi), błędne logowanie, test, cudza skrzynka (404 także dla admina), nieczytelne hasło → „ponowne podanie”, odłączenie (hasło usunięte, sekwencje wstrzymane), SPF / DKIM / DMARC | ✓ (19–24) | PASSED (mock) |
+| Harmonogram: pierwsza / kolejne (+17 dni od faktycznej wysyłki), weekend, godziny, strefa i zmiana czasu, pauza, wznowienie (bez serii zaległych), anulowanie (historia zostaje), zaległa wiadomość, restart workera (`sending` → wynik nieznany) | ✓ (25–34) | PASSED |
+| Bezpieczeństwo: drugi worker (blokada z innego połączenia), wynik nieznany bez ponowienia + rozstrzygnięcie, ponowienia 15 min → błąd po 3, duplikat odbiorcy między firmami (409 + zastąpienie, UNIQUE w bazie), limit dzienny, BLOCKED, DO_NOT_CONTACT, rezygnacja (HMAC, blokada trwała), adres bez MX / zła składnia, brakująca zmienna (start i worker), trwały błąd 550 → blokada | ✓ (35–45) | PASSED (mock) |
+| Lokalny serwer SMTP: 250 (Message-ID, List-Unsubscribe, UTF-8), test bez wysyłki, 535, 550 5.1.1, 451, 554 po treści, **timeout po treści → wynik nieznany**, serwer niedostępny → ponowienie | ✓ | PASSED (lokalny transport testowy) |
+| Ustawienia: wysyłka domyślnie wyłączona (wiadomości czekają), tryb testowy przetwarzany bez wysyłki, lista kontrolna, włączanie tylko owner/admin, AI 501 | ✓ | PASSED |
+| JS `sequences.test.mjs` (kroki, kolejność, duplikat, walidacja, zmienne, okno) | 34/34 | PASSED |
+| JS regresja | 35/35 · 18/18 · 31/31 · 5/5 · 19/19 · 35/35 | PASSED |
+| Playwright P10.5 (skrzynka testowa, kreator kampanii, przypisanie i edycja dla firmy, personalizacja, podgląd harmonogramu, start w trybie testowym, worker, pauza / wznowienie / anulowanie, duplikat odbiorcy, Active / Scheduled / Sent, Settings, uprawnienia pracownika, 1920 / 1440 / 1280 / 768 / 390) | **79/79** | PASSED (kontener) |
+| Playwright regresja 10.4.3 / 10.4 / 10 / 10.2 / 10.3 / wyników na stronie | 82/82 · 58/58 · 71/71 · 55/55 · 76/76 · 95/95 | PASSED (kontener) |
+
+Uwagi testowe: testy PHP wymagają zatrzymanego serwera deweloperskiego (pętla zwrotna innego procesu przetwarzała kolejki
+równolegle). Test 10.4.3 zeruje dzienny licznik analiz wieku stron (limit 150/dzień wyczerpany przez wielokrotne uruchomienia).
+
+### 17.1 LocalWP i produkcja
+<!-- P105-ENV -->
+**Pliki LocalWP — PASSED (11.10.2026):** kontrola rozbieżności (stan LocalWP = wdrożenie 10.4.3), skopiowano 51 plików,
+617/617 plików motywu zgodnych sumą MD5 z kontenerem. **Walidacja LocalWP — BLOCKED:** strona nadal nie działa (ostatni wpis
+w logu PHP 08:13 UTC) — migracja M015 i widoki NOT TESTED. **Paczka:** `Websites/ubr-deploy/uglybutrich-p105.zip` (6530 plików,
+z `vendor/`, bez `node_modules`, `.git`, `deploy/`, `key`, `key.pub`, `*.sql`). **Produkcja — NIEWDROŻONE / NOT TESTED.**

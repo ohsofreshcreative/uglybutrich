@@ -7,6 +7,7 @@
  * drugiego zlecenia (blokada w UI + idempotencja po stronie serwera).
  */
 import { api } from './api.js';
+import { automationMessage } from './claim.js';
 
 /** Zdarzenie dla list: dane Cold Calling zmieniły się (przeładuj stronę wyników bez utraty filtrów). */
 const changed = (companyId) => window.dispatchEvent(new CustomEvent('ubr:calling-changed', { detail: { companyId } }));
@@ -62,8 +63,13 @@ export function callingStore() {
       try {
         const res = await api(`/companies/${company.id}/claim`, { method: 'POST', body: { search_id: searchId } });
         company.prospect_id = res.prospect_id;
-        this.toast(res.claimed ? `Przejęto „${company.name}” — firma jest w Twoich Prospects.` : `„${company.name}” jest już Twoja.`);
-        if (this.drawer.company?.id === company.id && this.drawer.sales) this.loadSales();
+        const auto = automationMessage(res);
+        this.toast(res.claimed ? `Przejęto „${company.name}” — firma jest w Twoich Prospects.${auto ? ' ' + auto[0].toUpperCase() + auto.slice(1) + '.' : ''}` : `„${company.name}” jest już Twoja.`);
+        if (this.drawer.company?.id === company.id) {
+          this.drawer.company.prospect_id = res.prospect_id;
+          this.loadClaim(company.id);
+          if (this.drawer.sales) this.loadSales();
+        }
         changed(company.id);
       } catch (e) {
         this.error(e);

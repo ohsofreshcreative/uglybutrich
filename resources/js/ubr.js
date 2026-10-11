@@ -9,6 +9,9 @@ import { leadStore } from './ubr/lead.js';
 import { registerUi, livePreviewUrl, safeWebsiteUrl } from './ubr/ui.js';
 import { registerDashboard } from './ubr/dashboard.js';
 import { callingStore, CALL_FILTERS, activeCount } from './ubr/calling.js';
+import { PER_PAGE_OPTIONS, storedPerPage, rememberPerPage } from './ubr/per-page.js';
+import { claimStore } from './ubr/claim.js';
+import { registerSequences } from './ubr/sequences.js';
 
 const CONFIDENCE = { confirmed: 'Potwierdzona', declared: 'Wg źródła', uncertain: 'Niepewna', unavailable: 'Brak' };
 const LOCATION = {
@@ -56,11 +59,12 @@ const withQuery = (url, params) => {
 
 document.addEventListener('alpine:init', () => {
   Alpine.store('ubr', {
+    ...claimStore(),
     ...salesStore(),
     ...leadStore(),
     ...callingStore(),
     toasts: [],
-    drawer: { open: false, loading: false, saving: false, error: null, company: null, tab: 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null, lead: null, leadLoading: false, phoneScan: null, apollo: null, apolloBusy: false, apolloConsent: false, apolloFocus: false },
+    drawer: { open: false, loading: false, saving: false, error: null, company: null, tab: 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null, lead: null, leadLoading: false, phoneScan: null, apollo: null, apolloBusy: false, apolloConsent: false, apolloFocus: false, claim: null, claimBusy: false, ageBusy: false },
     preview: { open: false, loading: false, company: null, liveUrl: null, openUrl: null, upgraded: false, analysis: null, mode: 'live', view: 'desktop', zoom: 1, fit: true, error: null, frameKey: 0, returnFocus: null },
 
     toast(message, type = 'info') {
@@ -444,12 +448,14 @@ document.addEventListener('alpine:init', () => {
     },
 
     async openCompany(id) {
+      clearTimeout(this._claimTimer);
       clearTimeout(this._analysisTimer);
       clearTimeout(this._contactsTimer);
       clearTimeout(this._clickupTimer);
-      this.drawer = { open: true, loading: true, saving: false, error: null, company: null, tab: this.drawer.tab || 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null, lead: null, leadLoading: false, phoneScan: null, apollo: null, apolloBusy: false, apolloConsent: false, apolloFocus: false };
+      this.drawer = { open: true, loading: true, saving: false, error: null, company: null, tab: this.drawer.tab || 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null, lead: null, leadLoading: false, phoneScan: null, apollo: null, apolloBusy: false, apolloConsent: false, apolloFocus: false, claim: null, claimBusy: false, ageBusy: false };
       try {
         this.drawer.company = await api(`/companies/${id}`);
+        if (this.drawer.company.prospect_id) this.loadClaim(id);
         if (this.drawer.tab === 'analysis') this.loadAnalysis();
         if (this.drawer.tab === 'contacts') this.loadContacts();
         if (this.drawer.tab === 'sales') this.loadSales();
@@ -461,6 +467,7 @@ document.addEventListener('alpine:init', () => {
       }
     },
     closeDrawer() {
+      clearTimeout(this._claimTimer);
       clearTimeout(this._analysisTimer);
       clearTimeout(this._contactsTimer);
       clearTimeout(this._clickupTimer);
@@ -523,13 +530,14 @@ document.addEventListener('alpine:init', () => {
       const params = new URLSearchParams(window.location.search);
       const id = Number(params.get('company'));
       if (id > 0) {
-        if (['company', 'lead', 'sales', 'contacts', 'analysis'].includes(params.get('tab'))) this.$store.ubr.drawer.tab = params.get('tab');
+        if (['company', 'lead', 'sales', 'contacts', 'analysis', 'mailing'].includes(params.get('tab'))) this.$store.ubr.drawer.tab = params.get('tab');
         this.$store.ubr.openCompany(id);
       }
     },
   }));
 
   registerPipeline(Alpine);
+  registerSequences(Alpine);
   registerUi(Alpine);
   registerDashboard(Alpine);
 
@@ -570,10 +578,12 @@ document.addEventListener('alpine:init', () => {
     cancelling: false,
     history: [],
     search: null,
-    results: { items: [], total: 0, page: 1, per_page: 25, loading: false },
+    results: { items: [], total: 0, page: 1, per_page: storedPerPage('discover'), loading: false },
+    perPageOptions: PER_PAGE_OPTIONS,
+    listSeq: 0,
     resultFilter: 'all',
     resultSort: 'relevance',
-    analysisFilters: { min_opportunity: '', confidence: '', min_findings: '' },
+    analysisFilters: { min_opportunity: '', confidence: '', min_findings: '', site_age: '' },
     contactFilters: { has_contact: '', min_contact_score: '', contact_confidence: '', contact_role: '', min_contacts: '' },
     leadFilters: { min_lead: '', lead_confidence: '', redesign: '', recommendation: '', no_blockers: '' },
     callFilters: CALL_FILTERS(),
@@ -774,7 +784,7 @@ document.addEventListener('alpine:init', () => {
 
     async open(id) {
       clearTimeout(this.timer);
-      this.results = { items: [], total: 0, page: 1, per_page: 25, loading: true };
+      this.results = { items: [], total: 0, page: 1, per_page: storedPerPage('discover'), loading: true };
       history.replaceState(null, '', withQuery(window.location.href, { search: id }));
       await this.poll(id, true);
     },
@@ -821,16 +831,28 @@ document.addEventListener('alpine:init', () => {
       }
     },
 
+    /** Zmiana liczby wyników na stronie: zapamiętanie, powrót na 1. stronę, filtry i sortowanie bez zmian (jedno zapytanie listy). */
+    setPerPage(value) {
+      const n = rememberPerPage('discover', value);
+      if (n === this.results.per_page) return;
+      this.results.per_page = n;
+      this.loadResults(1);
+    },
+
     async loadResults(page = 1, silent = false) {
       if (!this.search) return;
       if (!silent) this.results.loading = true;
+      const seq = (this.listSeq = (this.listSeq || 0) + 1);
       try {
         const data = await api(`/discovery/searches/${this.search.id}/results`, {
           query: { page, per_page: this.results.per_page, filter: this.resultFilter, sort: this.resultSort, ...this.analysisFilters, ...this.contactFilters, ...this.leadFilters, ...this.callFilters },
         });
+        // Odpowiedź starszego żądania (np. odpytywanie w tle sprzed zmiany liczby wyników / filtra) nie nadpisuje nowszej listy.
+        if (seq !== this.listSeq) return;
         this.results = { ...this.results, ...data, loading: false };
         this.watchAnalyses();
       } catch (e) {
+        if (seq !== this.listSeq) return;
         this.results.loading = false;
         this.$store.ubr.error(e);
       }
@@ -890,7 +912,9 @@ document.addEventListener('alpine:init', () => {
     },
     sort: 'relevance',
     dir: 'desc',
-    list: { items: [], total: 0, page: 1, per_page: 25, loading: true },
+    list: { items: [], total: 0, page: 1, per_page: storedPerPage('prospects'), loading: true },
+    perPageOptions: PER_PAGE_OPTIONS,
+    listSeq: 0,
     regions: [],
     members: [],
     statuses: [],
@@ -917,6 +941,14 @@ document.addEventListener('alpine:init', () => {
       window.addEventListener('ubr:clickup-changed', () => setTimeout(() => this.load(this.list.page), 2500));
     },
 
+    /** Zmiana liczby wyników na stronie (zapamiętana osobno dla Prospects) — powrót na 1. stronę, filtry bez zmian. */
+    setPerPage(value) {
+      const n = rememberPerPage('prospects', value);
+      if (n === this.list.per_page) return;
+      this.list.per_page = n;
+      this.load(1);
+    },
+
     sortBy(key) {
       this.dir = this.sort === key && this.dir === 'asc' ? 'desc' : 'asc';
       this.sort = key;
@@ -926,9 +958,11 @@ document.addEventListener('alpine:init', () => {
     async load(page = 1) {
       this.list.loading = true;
       this.error = null;
+      const seq = (this.listSeq = (this.listSeq || 0) + 1);
       try {
         const filters = { ...this.filters, owner: this.filters.owner === 'me' ? String(window.UBR.userId) : this.filters.owner };
         const data = await api('/prospects', { query: { ...filters, ...this.callFilters, sort: this.sort, dir: this.dir, page, per_page: this.list.per_page } });
+        if (seq !== this.listSeq) return; // starsza odpowiedź (np. odświeżenie w tle) nie nadpisuje nowszej listy
         this.list = { ...this.list, ...data, loading: false };
         this.regions = data.regions;
         this.members = data.members || [];
@@ -936,6 +970,7 @@ document.addEventListener('alpine:init', () => {
         clearTimeout(this.pollTimer);
         if (data.items.some((c) => ['queued', 'running'].includes(c.analysis?.status) || ['queued', 'running'].includes(c.contacts?.status) || c.lead?.pending)) this.pollTimer = setTimeout(() => this.load(this.list.page), 6000);
       } catch (e) {
+        if (seq !== this.listSeq) return;
         this.error = e.message;
         this.list.loading = false;
       }

@@ -2,10 +2,12 @@
  * Klient REST API ubr/v1. Uwierzytelnianie: cookie WordPress + nonce (X-WP-Nonce, ochrona CSRF).
  */
 export class ApiError extends Error {
-  constructor(message, status, code) {
+  constructor(message, status, code, data = null) {
     super(message);
     this.status = status;
     this.code = code;
+    // Treść odpowiedzi błędu (np. 409 z opisem konfliktu sekwencji — Prompt 10.5).
+    this.data = data;
   }
 }
 
@@ -45,7 +47,7 @@ export async function api(path, { method = 'GET', body, query } = {}) {
       throw new ApiError('Sesja wygasła. Odśwież stronę.', response.status, data.code);
     }
 
-    throw new ApiError(message, response.status, data?.code);
+    throw new ApiError(message, response.status, data?.code, data);
   }
 
   return data;

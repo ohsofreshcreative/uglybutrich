@@ -233,6 +233,14 @@
 								<option value="contacts_none">Decydenci: brak wiarygodnych osób</option>
 								<option value="contacts_active">Decydenci: w kolejce / w toku</option>
 							</select>
+							{{-- Prompt 10.4.3: wiek strony (zapisane wyniki Website Age Intelligence — filtr nie uruchamia analiz) --}}
+							<select class="ubr-input h-8 text-[12px] w-auto" x-model="analysisFilters.site_age" @change="loadResults(1)" aria-label="Wiek strony" data-filter-site-age>
+								<option value="">Wiek strony: dowolny</option>
+								<option value="5">Strona 5+ lat</option>
+								<option value="7">Strona 7+ lat</option>
+								<option value="10">Strona 10+ lat</option>
+								<option value="unknown">Wiek nieznany</option>
+							</select>
 							<select class="ubr-input h-8 text-[12px] w-auto" x-model="analysisFilters.min_opportunity" @change="loadResults(1)" aria-label="Minimalny Opportunity Score">
 								<option value="">Opportunity: dowolny</option>
 								<option value="40">Opportunity ≥ 40</option>
@@ -317,6 +325,16 @@
 								<option value="contact_priority">Sortuj: Contact Priority</option>
 								<option value="position">Sortuj: kolejność źródła</option>
 							</select>
+							{{-- Liczba wyników na stronie (paginacja po stronie serwera; wybór zapamiętany lokalnie dla Discover) --}}
+							<label class="flex items-center gap-1.5 text-[12px] text-ink-muted whitespace-nowrap" data-per-page>
+								<span>Wyników na stronie:</span>
+								<select class="ubr-input h-8 text-[12px] w-[78px] shrink-0" @change="setPerPage($event.target.value)" aria-label="Wyników na stronie">
+									<option value="10" :selected="results.per_page === 10">10</option>
+									<option value="25" :selected="results.per_page === 25">25</option>
+									<option value="50" :selected="results.per_page === 50">50</option>
+									<option value="100" :selected="results.per_page === 100">100</option>
+								</select>
+							</label>
 						</div>
 				</div>
 				{{-- Cold Calling: telefony, gotowość, opiekun, wielkość, CRM (Prompt 10) --}}

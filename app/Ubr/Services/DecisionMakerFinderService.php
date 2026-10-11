@@ -67,6 +67,9 @@ class DecisionMakerFinderService
 		}
 
 		$limits = ContactLimits::limits(isset($run['organization_id']) ? (int) $run['organization_id'] : null);
+		$claim = ($run['trigger_type'] ?? '') === 'claim';
+		// Prompt 10.4.3 — etap analizy (statusy po przejęciu firmy): szukamy decydenta → szukamy telefonu → gotowe.
+		$this->runs->update($runId, ['stage' => 'people']);
 		$sources = [];
 		$errors = [];
 		$raw = [];
@@ -129,11 +132,17 @@ class DecisionMakerFinderService
 
 		// C) Apollo People Search (przygotowane, domyślnie wyłączone).
 		$apolloOrg = app(\App\Ubr\Infrastructure\Database\Db::class)->value("SELECT external_id FROM " . app(\App\Ubr\Infrastructure\Database\Db::class)->table(\App\Ubr\Infrastructure\Database\Tables::COMPANY_EXTERNAL_IDS) . " WHERE company_id = %d AND provider = 'apollo' LIMIT 1", (int) $company['id']);
-		$apollo = $this->apollo->search($domain, isset($run['organization_id']) ? (int) $run['organization_id'] : null, $apolloOrg ? (string) $apolloOrg : null);
-		$apolloStatus = ApolloPeopleSource::status();
-		$sources['apollo'] = $apollo['error']
-			? ['state' => 'error', 'message' => $apollo['error']]
-			: ['state' => $apollo['state'] === 'enabled' ? 'ok' : $apollo['state'], 'message' => $apollo['state'] === 'enabled' ? sprintf('Kandydaci: %d.', count($apollo['candidates'])) : $apolloStatus['message']];
+		if ($claim && ! ApolloPeopleSource::claimSearchAllowed()) {
+			// Przejęcie firmy: wyłącznie zapisane wyniki Apollo (bez nowych zapytań, bez kosztów).
+			$apollo = $this->apollo->saved((int) $company['id']);
+			$sources['apollo'] = ['state' => $apollo['candidates'] ? 'ok' : 'skipped', 'message' => $apollo['candidates'] ? sprintf('Zapisane wyniki Apollo: %d osób.', count($apollo['candidates'])) : 'Bez nowych zapytań Apollo przy przejęciu — brak zapisanych osób z pełnym nazwiskiem.'];
+		} else {
+			$apollo = $this->apollo->search($domain, isset($run['organization_id']) ? (int) $run['organization_id'] : null, $apolloOrg ? (string) $apolloOrg : null);
+			$apolloStatus = ApolloPeopleSource::status();
+			$sources['apollo'] = $apollo['error']
+				? ['state' => 'error', 'message' => $apollo['error']]
+				: ['state' => $apollo['state'] === 'enabled' ? 'ok' : $apollo['state'], 'message' => $apollo['state'] === 'enabled' ? sprintf('Kandydaci: %d.', count($apollo['candidates'])) : $apolloStatus['message']];
+		}
 
 		if ($apollo['error']) {
 			$errors[] = ['stage' => 'apollo', 'message' => $apollo['error']];
@@ -238,13 +247,19 @@ class DecisionMakerFinderService
 		]);
 
 		if ($status !== 'failed') {
-			$this->syncCompany((int) $company['id'], $runId, $status, $ranked, array_values($channels));
+			$this->runs->update($runId, ['stage' => 'phones']);
 
 			// Prompt 10.2: telefony osób z tych samych stron (bez dodatkowych zapytań) — powiązania z dowodem.
+			// Prompt 10.4.3: przed powiadomieniem o zakończeniu (aktualizacja ClickUp ma już numer bezpośredni).
 			if (! empty($crawl['docs'])) {
+				$this->syncCompanyQuiet((int) $company['id'], $runId, $status, $ranked, array_values($channels));
 				app(DecisionPhoneService::class)->fromDocuments((int) $company['id'], array_map(fn ($d) => ['html' => $d['html'], 'url' => $d['url']], $crawl['docs']));
 			}
+
+			$this->syncCompany((int) $company['id'], $runId, $status, $ranked, array_values($channels));
+			$this->runs->update($runId, ['stage' => 'done']);
 		} else {
+			$this->runs->update($runId, ['stage' => 'failed']);
 			$this->companies->update((int) $company['id'], ['contacts_status' => 'failed', 'last_contact_run_id' => $runId]);
 		}
 
@@ -369,7 +384,13 @@ class DecisionMakerFinderService
 	 * @param array<string, mixed> $ranked
 	 * @param list<array<string, string>> $channels
 	 */
-	private function syncCompany(int $companyId, int $runId, string $status, array $ranked, array $channels): void
+	/** Zapis wyników bez zdarzenia `contacts_done` (telefony osób wymagają zapisanych kontaktów). */
+	private function syncCompanyQuiet(int $companyId, int $runId, string $status, array $ranked, array $channels): void
+	{
+		$this->syncCompany($companyId, $runId, $status, $ranked, $channels, false);
+	}
+
+	private function syncCompany(int $companyId, int $runId, string $status, array $ranked, array $channels, bool $notify = true): void
 	{
 		$top1 = null;
 
@@ -394,7 +415,18 @@ class DecisionMakerFinderService
 			'top_contact_confidence' => $top1['confidence_level'] ?? null,
 			'company_channels' => wp_json_encode($channels),
 		]);
-		do_action('ubr/company/changed', $companyId, 'contacts_done', null);
+
+		// Prompt 10.4.3 — ogólny e-mail firmy z kanałów, gdy weryfikacja go nie znalazła.
+		$general = array_values(array_filter($channels, fn ($ch) => ($ch['type'] ?? '') === 'COMPANY_GENERAL_EMAIL'))[0]['value'] ?? null;
+		$company = $general ? $this->companies->find($companyId) : null;
+
+		if ($company && empty($company['general_email']) && is_email((string) $general)) {
+			$this->companies->update($companyId, ['general_email' => (string) $general, 'general_email_source' => mb_substr((string) (array_values(array_filter($channels, fn ($ch) => ($ch['type'] ?? '') === 'COMPANY_GENERAL_EMAIL'))[0]['source_url'] ?? ''), 0, 500) ?: null, 'general_email_at' => Db::now()]);
+		}
+
+		if ($notify) {
+			do_action('ubr/company/changed', $companyId, 'contacts_done', null);
+		}
 	}
 
 	/**

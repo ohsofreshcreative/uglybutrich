@@ -2,6 +2,8 @@
 
 namespace App\Ubr\Services;
 
+use App\Ubr\Infrastructure\Http\UrlGuard;
+
 use App\Ubr\Domain\Tenancy\TenantContext;
 use App\Ubr\Infrastructure\Repositories\CompanyRepository;
 use App\Ubr\Infrastructure\Repositories\ProspectRepository;
@@ -105,9 +107,8 @@ class ProspectService
 			$perPage
 		);
 
-		if (array_filter($data['items'], fn ($r) => ($r['li_status'] ?? null) === null || ! empty($r['li_stale']))) {
-			app(LeadIntelligenceRunner::class)->kick();
-		}
+		// Prompt 10.4.3 — samo wyświetlenie listy (paginacja, filtry, sortowanie) nie zleca przeliczeń Lead Intelligence:
+		// oceny liczy proces w tle (zmiana danych firmy, Discovery, healthcheck).
 
 		return [
 			'items' => app(CallPresenter::class)->attach($ctx, app(ContactResearchService::class)->applyOrganizationView($ctx, array_map(fn ($r) => CompanyPresenter::row($r), $data['items'])), $data['items']),
@@ -167,6 +168,10 @@ class ProspectService
 			'pkd_main' => $company['pkd_main'] ?? null,
 			'pkd_description' => $company['pkd_description'] ?? null,
 			'checks' => app(\App\Ubr\Infrastructure\Repositories\CompanyCheckRepository::class)->forCompany($companyId, $ctx->organizationId, 10),
+			// Prompt 10.4.3 — Website Age Intelligence i źródło ogólnego e-maila firmy.
+			'site_age_detail' => WebsiteAgeService::present($company),
+			'general_email_source' => UrlGuard::httpUrl($company['general_email_source'] ?? null),
+			'can_check_site_age' => $ctx->can('analysis.run') && ! empty($company['domain']),
 			'description' => $company['description'],
 			'street' => $company['street'],
 			'postal_code' => $company['postal_code'],

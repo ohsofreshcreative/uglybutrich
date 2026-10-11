@@ -29,11 +29,28 @@ class VerificationRunner
 
 	public const CRON_HOOK = 'ubr_verification_tick';
 
+	/**
+	 * Prompt 10.4.3 (diagnostyka 10.4.1, Hostinger/LiteSpeed): krok workera WWW był przerywany po ok. 10 s, a blokada
+	 * (170 s) wstrzymywała kolejkę na ~3 min. Teraz: krótka blokada odnawiana po każdej firmie i krótkie pobranie firm.
+	 */
+	public const LOCK_TTL = 60;
+
+	public const CLAIM_TTL = 90;
+
 	public function __construct(
 		private VerificationQueueRepository $queue,
 		private CompanyVerifier $verifier,
 		private AsyncWorker $worker,
 	) {
+	}
+
+	/**
+	 * Budżet kroku workera WWW (sekundy) — krótszy niż czas, po którym hosting przerywa proces loopbacku.
+	 * Kolejne kroki są łańcuchowane, więc przepustowość nie spada. UBR_VERIFY_STEP_SECONDS, domyślnie 8.
+	 */
+	public static function stepSeconds(): int
+	{
+		return max(3, min(60, (int) apply_filters('ubr/verification/step_seconds', defined('UBR_VERIFY_STEP_SECONDS') ? (int) constant('UBR_VERIFY_STEP_SECONDS') : 8)));
 	}
 
 	public static function batchSize(): int
@@ -44,11 +61,12 @@ class VerificationRunner
 	/**
 	 * @return array{processed: int, verified: int, retried: int, failed: int, remaining_due: int}
 	 */
-	public function tick(int $budgetSeconds = 20, bool $chain = true): array
+	public function tick(?int $budgetSeconds = null, bool $chain = true): array
 	{
+		$budgetSeconds ??= self::stepSeconds();
 		$stats = ['processed' => 0, 'verified' => 0, 'retried' => 0, 'failed' => 0, 'remaining_due' => 0];
 
-		if (! $this->acquireLock($budgetSeconds + 150)) {
+		if (! $this->acquireLock(self::LOCK_TTL)) {
 			return $stats;
 		}
 
@@ -79,7 +97,7 @@ class VerificationRunner
 			try {
 				while (true) {
 					while (count($pool) < self::batchSize() && microtime(true) - $started < $budgetSeconds) {
-						$item = $this->queue->claim(170);
+						$item = $this->queue->claim(self::CLAIM_TTL);
 
 						if (! $item) {
 							break;
@@ -107,6 +125,13 @@ class VerificationRunner
 					}
 
 					if ($ready === null) {
+						// Koniec budżetu, a strony pozostałych firm jeszcze się pobierają → zwrot do kolejki (następny krok).
+						if (microtime(true) - $started >= $budgetSeconds) {
+							$this->releasePool($pool);
+							$pool = [];
+							break;
+						}
+
 						$fetcher->pump(0.05);
 						continue;
 					}
@@ -115,6 +140,14 @@ class VerificationRunner
 					unset($pool[$ready]);
 					$pool = array_values($pool);
 					$this->process($item, $stats);
+					$this->renewLock();
+
+					// Budżet kroku wyczerpany — nieprzetworzone firmy wracają do kolejki, kolejny krok zleca łańcuch.
+					if ($pool && microtime(true) - $started >= $budgetSeconds) {
+						$this->releasePool($pool);
+						$pool = [];
+						break;
+					}
 				}
 			} finally {
 				if ($idle) {
@@ -158,6 +191,15 @@ class VerificationRunner
 				$this->queue->complete((int) $item['id']);
 				$stats['verified']++;
 				do_action('ubr/company/changed', (int) $item['company_id'], 'verification_done', null);
+
+				// Prompt 10.4.3 — Discover: Website Opportunity Score w tle po weryfikacji (osobna kolejka, niższy priorytet).
+				if ((int) ($item['search_id'] ?? 0) > 0 && (int) ($item['requested_by_org'] ?? 0) > 0) {
+					try {
+						app(AnalysisService::class)->queueAuto((int) $item['company_id'], (int) $item['requested_by_org']);
+					} catch (Throwable $e) {
+						error_log('[ubr] Auto analysis for company #' . $item['company_id'] . ' not queued: ' . $e->getMessage());
+					}
+				}
 			}
 		} catch (Throwable $e) {
 			error_log('[ubr] Verification of company #' . $item['company_id'] . ' failed: ' . $e->getMessage());
@@ -283,6 +325,19 @@ class VerificationRunner
 		wp_cache_delete(self::LOCK_OPTION, 'options');
 
 		return $taken;
+	}
+
+	/** @param list<array<string, mixed>> $pool */
+	private function releasePool(array $pool): void
+	{
+		foreach ($pool as $item) {
+			$this->queue->release((int) $item['id']);
+		}
+	}
+
+	private function renewLock(): void
+	{
+		update_option(self::LOCK_OPTION, time() + self::LOCK_TTL, false);
 	}
 
 	private function releaseLock(): void

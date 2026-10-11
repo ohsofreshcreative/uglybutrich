@@ -119,6 +119,27 @@ class CallingController
 		return $this->apollo->reveal($this->tenants->require('contacts.reveal'), (int) $request['id'], (string) ($body['confirm_token'] ?? ''), ! empty($body['acknowledge_unknown_cost']), ! empty($body['refresh']));
 	}
 
+	/** Prompt 10.4.3 — status automatyzacji przejętej firmy: analiza decydenta + synchronizacja ClickUp. */
+	public function claimStatus(WP_REST_Request $request): array
+	{
+		$ctx = $this->tenants->require('companies.view');
+		$id = (int) $request['id'];
+
+		return [
+			'research' => app(\App\Ubr\Services\ContactResearchService::class)->claimStatus($ctx, $id),
+			'clickup' => $ctx->can('pipeline.view') ? app(\App\Ubr\Services\ClickUpExportService::class)->claimStatus($ctx, $id) : null,
+		];
+	}
+
+	/** Prompt 10.4.3 — „Ponów wyszukiwanie decydenta” (zabezpieczone przed wielokrotnym uruchomieniem). */
+	public function claimResearch(WP_REST_Request $request): \WP_REST_Response
+	{
+		$ctx = $this->tenants->require('companies.view');
+		$result = app(\App\Ubr\Services\ContactResearchService::class)->requestForClaim($ctx, (int) $request['id'], true);
+
+		return new \WP_REST_Response($result + ['status' => app(\App\Ubr\Services\ContactResearchService::class)->claimStatus($ctx, (int) $request['id'])], $result['queued'] ? 202 : ($result['reason'] === 'not_found' ? 404 : 200));
+	}
+
 	public function claim(WP_REST_Request $request): array
 	{
 		$ctx = $this->tenants->require('prospects.manage');

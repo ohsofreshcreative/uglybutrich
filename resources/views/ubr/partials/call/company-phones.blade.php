@@ -45,5 +45,5 @@
 			</li>
 		</template>
 	</ul>
-	<p class="text-[11px] text-ink-muted" x-show="$store.ubr.phones.data?.checked_at" x-text="'Strona sprawdzona: ' + $store.ubr.date($store.ubr.phones.data?.checked_at) + '. Kliknięcie numeru otwiera aplikację telefonu — rozmowa nie jest zapisywana automatycznie.'"></p>
+	<p class="text-[11px] text-ink-muted" x-show="$store.ubr.phones.data?.checked_at" x-text="'Strona sprawdzona: ' + $store.ubr.date($store.ubr.phones.data?.checked_at) + '. Numer skopiujesz przyciskiem obok — wynik rozmowy zapisz ręcznie.'"></p>
 </section>

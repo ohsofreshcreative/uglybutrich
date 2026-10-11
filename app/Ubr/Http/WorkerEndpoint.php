@@ -94,7 +94,7 @@ class WorkerEndpoint
 
 		try {
 			if ($job === 'verify') {
-				app(\App\Ubr\Services\VerificationRunner::class)->tick(20);
+				app(\App\Ubr\Services\VerificationRunner::class)->tick();
 			} elseif ($job === 'analyze') {
 				app(\App\Ubr\Services\WebsiteAnalysisRunner::class)->tick();
 			} elseif ($job === 'contacts') {
@@ -105,6 +105,10 @@ class WorkerEndpoint
 				app(\App\Ubr\Services\LeadIntelligenceRunner::class)->tick();
 			} elseif ($job === 'phones') {
 				app(\App\Ubr\Services\ApolloPhoneRunner::class)->tick();
+			} elseif ($job === 'age') {
+				app(\App\Ubr\Services\WebsiteAgeRunner::class)->tick();
+			} elseif ($job === 'sequences') {
+				app(\App\Ubr\Services\Sequences\SequenceRunner::class)->tick();
 			}
 		} catch (\Throwable $e) {
 			error_log('[ubr] Job worker "' . $job . '" failed: ' . $e->getMessage());

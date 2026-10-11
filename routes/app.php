@@ -10,6 +10,7 @@ return [
 	'discover' => ['slug' => 'discover', 'title' => 'Discover', 'icon' => 'search', 'view' => 'ubr.pages.discover'],
 	'prospects' => ['slug' => 'prospects', 'title' => 'Prospects', 'icon' => 'bookmark', 'view' => 'ubr.pages.prospects'],
 	'pipeline' => ['slug' => 'pipeline', 'title' => 'Pipeline', 'icon' => 'board', 'view' => 'ubr.pages.pipeline'],
+	'sequences' => ['slug' => 'sequences', 'title' => 'Sequences', 'icon' => 'mail', 'view' => 'ubr.pages.sequences'],
 	'settings' => ['slug' => 'settings', 'title' => 'Settings', 'icon' => 'settings', 'view' => 'ubr.pages.settings'],
 	// Callback OAuth ClickUp (Redirect URI) — bez pozycji w menu, bez widoku (przekierowanie do Settings).
 	'clickup-callback' => ['slug' => 'clickup-callback', 'title' => 'ClickUp', 'icon' => 'settings', 'view' => '', 'hidden' => true],

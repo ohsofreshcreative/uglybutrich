@@ -15,6 +15,8 @@ use App\Ubr\Infrastructure\Database\Migrations\M010PhonesOwnership;
 use App\Ubr\Infrastructure\Database\Migrations\M011DecisionMakerPhones;
 use App\Ubr\Infrastructure\Database\Migrations\M012ApolloContactMatching;
 use App\Ubr\Infrastructure\Database\Migrations\M013PageCache;
+use App\Ubr\Infrastructure\Database\Migrations\M014ClaimAgeClickUp;
+use App\Ubr\Infrastructure\Database\Migrations\M015Sequences;
 use App\Ubr\Infrastructure\Database\Migrations\Migration;
 use Throwable;
 
@@ -54,6 +56,8 @@ class Migrator
 			new M011DecisionMakerPhones(),
 			new M012ApolloContactMatching(),
 			new M013PageCache(),
+			new M014ClaimAgeClickUp(),
+			new M015Sequences(),
 		];
 	}
 

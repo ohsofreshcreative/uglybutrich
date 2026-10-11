@@ -298,6 +298,265 @@ class ClickUpExportService
 		return array_map(fn ($j) => $this->presentJob($j) + ['company' => ['id' => (int) $j['company_id'], 'name' => $j['company_name']]], $this->repo->recentJobs($ctx->organizationId));
 	}
 
+	/** Prompt 10.4.3 — automatyczne zadanie ClickUp po przejęciu firmy (UBR_CLICKUP_ON_CLAIM, ustawienie organizacji). */
+	public static function claimEnabled(int $organizationId): bool
+	{
+		$org = app(\App\Ubr\Infrastructure\Repositories\OrganizationRepository::class)->find($organizationId);
+		$setting = $org['settings']['clickup_on_claim'] ?? null;
+		// Domyślnie WYŁĄCZONE — zadania w ClickUp po przejęciu dopiero po włączeniu przez właściciela / admina organizacji
+		// (Settings → ClickUp) albo stałą UBR_CLICKUP_ON_CLAIM. Wdrożenie nie zaczyna samo tworzyć zadań w ClickUp.
+		$default = defined('UBR_CLICKUP_ON_CLAIM') && constant('UBR_CLICKUP_ON_CLAIM');
+
+		return (bool) apply_filters('ubr/clickup/on_claim', $setting === null ? $default : (bool) $setting, $organizationId);
+	}
+
+	/**
+	 * Połączenie do zadania po przejęciu: własne połączenie pracownika z wybraną listą, a gdy go brak — połączenie
+	 * wskazane przez właściciela organizacji (`settings.clickup_claim_connection_id`).
+	 *
+	 * @return array<string, mixed>|null
+	 */
+	public function claimConnection(TenantContext $ctx): ?array
+	{
+		$ready = fn (?array $c) => $c && $c['status'] === 'connected' && ! empty($c['destination']['list_id']) && (int) $c['organization_id'] === $ctx->organizationId;
+		$own = $this->repo->connection($ctx->organizationId, $ctx->userId);
+
+		if ($ready($own)) {
+			return $own;
+		}
+
+		$org = app(\App\Ubr\Infrastructure\Repositories\OrganizationRepository::class)->find($ctx->organizationId);
+		$fallbackId = (int) ($org['settings']['clickup_claim_connection_id'] ?? 0);
+		$fallback = $fallbackId > 0 ? $this->repo->connectionById($fallbackId) : null;
+
+		return $ready($fallback) ? $fallback : null;
+	}
+
+	/**
+	 * Ustawienie organizacji: zadania ClickUp po „Przejmij firmę” (+ opcjonalnie połączenie dla pracowników bez własnego).
+	 *
+	 * @return array{enabled: bool, org_setting: ?bool, fallback: bool, fallback_is_mine: bool, can_manage: bool}
+	 */
+	public function claimSyncStatus(TenantContext $ctx): array
+	{
+		$org = app(\App\Ubr\Infrastructure\Repositories\OrganizationRepository::class)->find($ctx->organizationId);
+		$setting = $org['settings']['clickup_on_claim'] ?? null;
+		$fallbackId = (int) ($org['settings']['clickup_claim_connection_id'] ?? 0);
+		$own = $this->repo->connection($ctx->organizationId, $ctx->userId);
+
+		return [
+			'enabled' => self::claimEnabled($ctx->organizationId),
+			'org_setting' => $setting === null ? null : (bool) $setting,
+			'fallback' => $fallbackId > 0,
+			'fallback_is_mine' => $fallbackId > 0 && $own && (int) $own['id'] === $fallbackId,
+			'can_manage' => $ctx->can('organization.update'),
+		];
+	}
+
+	/**
+	 * @param array<string, mixed> $input enabled (bool), use_my_connection (bool — moje połączenie dla przejęć pracowników bez własnego)
+	 * @return array<string, mixed>
+	 */
+	public function saveClaimSync(TenantContext $ctx, array $input): array
+	{
+		if (! $ctx->can('organization.update')) {
+			throw \App\Ubr\Support\UbrException::forbidden();
+		}
+
+		$orgs = app(\App\Ubr\Infrastructure\Repositories\OrganizationRepository::class);
+		$settings = (array) ($orgs->find($ctx->organizationId)['settings'] ?? []);
+
+		if (array_key_exists('enabled', $input)) {
+			$settings['clickup_on_claim'] = (bool) $input['enabled'];
+		}
+
+		if (array_key_exists('use_my_connection', $input)) {
+			$own = $this->repo->connection($ctx->organizationId, $ctx->userId);
+
+			if ($input['use_my_connection']) {
+				if (! $own || $own['status'] !== 'connected' || empty($own['destination']['list_id'])) {
+					throw \App\Ubr\Support\UbrException::invalid('Najpierw połącz własne konto ClickUp i wybierz listę.');
+				}
+
+				$settings['clickup_claim_connection_id'] = (int) $own['id'];
+			} elseif ($own && (int) ($settings['clickup_claim_connection_id'] ?? 0) === (int) $own['id']) {
+				unset($settings['clickup_claim_connection_id']);
+			}
+		}
+
+		$orgs->update($ctx->organizationId, ['settings' => $settings]);
+
+		return $this->claimSyncStatus($ctx);
+	}
+
+	/**
+	 * Prompt 10.4.3 — ETAP 1 synchronizacji: zadanie ClickUp po przejęciu firmy (w tle). Nigdy nie rzuca wyjątku —
+	 * brak konfiguracji lub błąd ClickUp nie może zablokować przejęcia. Istniejące powiązanie → aktualizacja tego zadania.
+	 *
+	 * @return array{status: string, message: string, job_id?: int}
+	 */
+	public function queueForClaim(TenantContext $ctx, int $companyId, ?int $prospectId = null): array
+	{
+		try {
+			if (! ClickUpOAuthService::configuration()['configured']) {
+				return ['status' => 'needs_config', 'message' => 'Integracja ClickUp nie jest skonfigurowana.'];
+			}
+
+			if (! self::claimEnabled($ctx->organizationId)) {
+				return ['status' => 'disabled', 'message' => 'Automatyczne zadania ClickUp po przejęciu są wyłączone.'];
+			}
+
+			if (! $ctx->can('clickup.export')) {
+				return ['status' => 'needs_config', 'message' => 'Brak uprawnienia do eksportu ClickUp.'];
+			}
+
+			$connection = $this->claimConnection($ctx);
+
+			if (! $connection) {
+				return ['status' => 'needs_config', 'message' => 'Połącz ClickUp i wybierz listę w Ustawieniach (albo poproś właściciela organizacji o wskazanie połączenia dla przejęć).'];
+			}
+
+			$dest = (array) $connection['destination'];
+			$existing = $this->repo->exportFor($ctx->organizationId, $companyId, (string) $dest['list_id']);
+			// Token należy do właściciela połączenia — zadanie działa w jego imieniu (własne połączenie pracownika albo wskazane przez właściciela organizacji).
+			$job = fn (string $operation, int $exportId) => $this->repo->createJob(['organization_id' => $ctx->organizationId, 'user_id' => (int) $connection['user_id'], 'connection_id' => (int) $connection['id'], 'export_id' => $exportId, 'company_id' => $companyId, 'operation' => $operation, 'trigger_type' => 'claim']);
+
+			if ($existing && $existing['export_status'] === 'success' && $existing['task_id']) {
+				$this->markClaim((int) $existing['id'], $existing, $ctx->userId);
+
+				if (! $this->repo->hasActiveJob($ctx->organizationId, $companyId, 'update', (int) $existing['id'])) {
+					$id = $job('update', (int) $existing['id']);
+					$this->runner->kick();
+
+					return ['status' => 'linked', 'message' => 'Firma ma już zadanie ClickUp — zostanie zaktualizowane.', 'job_id' => $id];
+				}
+
+				return ['status' => 'linked', 'message' => 'Firma ma już zadanie ClickUp.'];
+			}
+
+			if ($existing && in_array($existing['export_status'], ['queued', 'running', 'unknown'], true)) {
+				return ['status' => 'in_progress', 'message' => 'Synchronizacja z ClickUp już trwa.'];
+			}
+
+			if ($this->repo->countNewTasksSince($ctx->organizationId, gmdate('Y-m-d 00:00:00')) >= self::dailyLimit($ctx->organizationId)) {
+				return ['status' => 'limit', 'message' => sprintf('Dzienny limit nowych zadań ClickUp (%d) wyczerpany — zadanie można wysłać jutro z karty firmy.', self::dailyLimit($ctx->organizationId))];
+			}
+
+			if ($existing && $existing['export_status'] === 'failed') {
+				$this->repo->updateExport((int) $existing['id'], ['export_status' => 'queued', 'last_error' => null, 'user_id' => (int) $connection['user_id'], 'connection_id' => (int) $connection['id']]);
+				$exportId = (int) $existing['id'];
+			} else {
+				$exportId = $this->repo->reserveExport([
+					'organization_id' => $ctx->organizationId, 'company_id' => $companyId, 'prospect_id' => $prospectId, 'user_id' => (int) $connection['user_id'],
+					'connection_id' => (int) $connection['id'], 'workspace_id' => (string) $dest['team_id'], 'list_id' => (string) $dest['list_id'],
+					'list_name' => mb_substr((string) ($dest['list_name'] ?? ''), 0, 255), 'variant' => 0,
+				]);
+
+				if ($exportId === null) {
+					return ['status' => 'in_progress', 'message' => 'Synchronizacja z ClickUp już trwa.'];
+				}
+			}
+
+			$this->markClaim($exportId, $this->repo->export($ctx->organizationId, $exportId), $ctx->userId);
+			$id = $job('create', $exportId);
+			$this->runner->kick();
+
+			return ['status' => 'queued', 'message' => 'Zadanie ClickUp zostanie utworzone w tle.', 'job_id' => $id];
+		} catch (\Throwable $e) {
+			error_log('[ubr] ClickUp claim export for company #' . $companyId . ' not queued: ' . $e->getMessage());
+
+			return ['status' => 'error', 'message' => 'Nie udało się zlecić zadania ClickUp — spróbuj z karty firmy.'];
+		}
+	}
+
+	/**
+	 * Prompt 10.4.3 — ETAP 2: po zakończeniu analizy decydenta aktualizacja TEGO SAMEGO zadania (bez tworzenia nowego).
+	 * Dotyczy zadań utworzonych lub powiązanych przy przejęciu firmy.
+	 */
+	public function queueClaimUpdate(int $companyId): int
+	{
+		$queued = 0;
+
+		foreach ($this->repo->exportsForCompanyAllOrgs($companyId) as $export) {
+			$synced = json_decode((string) ($export['synced_fields'] ?? ''), true) ?: [];
+
+			if (empty($synced['__claim']) || $export['export_status'] !== 'success' || ! $export['task_id']) {
+				continue;
+			}
+
+			if ($this->repo->hasActiveJob((int) $export['organization_id'], $companyId, 'update', (int) $export['id'])) {
+				continue;
+			}
+
+			$this->repo->createJob(['organization_id' => (int) $export['organization_id'], 'user_id' => (int) $export['user_id'], 'connection_id' => (int) $export['connection_id'], 'export_id' => (int) $export['id'], 'company_id' => $companyId, 'operation' => 'update', 'trigger_type' => 'claim']);
+			$queued++;
+		}
+
+		if ($queued) {
+			$this->runner->kick();
+		}
+
+		return $queued;
+	}
+
+	/**
+	 * Status synchronizacji ClickUp w karcie przejętej firmy.
+	 *
+	 * @return array{key: string, label: string, task_url: ?string, conflicts: list<array<string, mixed>>, message: ?string}
+	 */
+	public function claimStatus(TenantContext $ctx, int $companyId): array
+	{
+		$connection = $this->claimConnection($ctx);
+		$out = fn (string $key, string $label, ?string $url = null, array $conflicts = [], ?string $message = null) => ['key' => $key, 'label' => $label, 'task_url' => $url, 'conflicts' => $conflicts, 'message' => $message];
+
+		$enabled = self::claimEnabled($ctx->organizationId);
+		$disabled = fn () => $out('disabled', 'Wyłączone', null, [], 'Zadania ClickUp po przejęciu są wyłączone — włącza je właściciel lub administrator (Ustawienia → ClickUp).');
+
+		if (! ClickUpOAuthService::configuration()['configured'] || ! $connection) {
+			return $enabled ? $out('needs_config', 'Wymaga konfiguracji', null, [], 'Połącz ClickUp i wybierz listę w Ustawieniach.') : $disabled();
+		}
+
+		$export = $this->repo->exportFor($ctx->organizationId, $companyId, (string) $connection['destination']['list_id']);
+
+		if (! $export) {
+			return $enabled ? $out('none', 'Oczekuje na synchronizację', null) : $disabled();
+		}
+
+		$url = UrlGuard::httpUrl($export['task_url'] ?? null);
+		$conflicts = array_slice((array) (json_decode((string) ($export['conflicts'] ?? ''), true) ?: []), -5);
+		$jobs = $this->repo->jobsForCompany($ctx->organizationId, $companyId, 10);
+		$active = array_filter($jobs, fn ($j) => in_array($j['status'], ['queued', 'running'], true) && (int) $j['export_id'] === (int) $export['id']);
+
+		if ($active) {
+			$op = array_values($active)[0]['operation'];
+
+			return $out('running', $op === 'reconcile' ? 'Sprawdzanie, czy zadanie powstało' : ($export['export_status'] === 'queued' ? 'Oczekuje na synchronizację' : 'Synchronizacja w toku'), $url, $conflicts);
+		}
+
+		return match ($export['export_status']) {
+			'success' => (function () use ($out, $url, $conflicts, $jobs, $export) {
+				$updated = array_filter($jobs, fn ($j) => $j['operation'] === 'update' && $j['status'] === 'success' && (int) $j['export_id'] === (int) $export['id']);
+
+				return $out($updated ? 'updated' : 'added', $updated ? 'Zaktualizowano ClickUp' : 'Dodano do ClickUp', $url, $conflicts);
+			})(),
+			'queued' => $out('queued', 'Oczekuje na synchronizację', $url, $conflicts),
+			'running' => $out('running', 'Synchronizacja w toku', $url, $conflicts),
+			default => $out('error', 'Błąd synchronizacji', $url, $conflicts, $export['last_error'] ?: null),
+		};
+	}
+
+	/** @param array<string, mixed>|null $export */
+	private function markClaim(int $exportId, ?array $export, int $claimerId): void
+	{
+		$synced = json_decode((string) ($export['synced_fields'] ?? ''), true) ?: [];
+
+		if (empty($synced['__claim']) || (int) ($synced['__claimer'] ?? 0) !== $claimerId) {
+			$synced['__claim'] = true;
+			$synced['__claimer'] = $claimerId;
+			$this->repo->updateExport($exportId, ['synced_fields' => wp_json_encode($synced)]);
+		}
+	}
+
 	public const STATUS_LABELS = [
 		'queued' => 'W kolejce', 'running' => 'W toku', 'success' => 'Sukces', 'failed' => 'Błąd', 'unknown' => 'Stan nieznany',
 		'skipped_duplicate' => 'Pominięto (duplikat)', 'cancelled' => 'Anulowano', 'skipped' => 'Pominięto',
@@ -333,7 +592,7 @@ class ClickUpExportService
 		return [
 			'id' => (int) $j['id'],
 			'operation' => $j['operation'],
-			'operation_label' => ['create' => 'Eksport', 'update' => 'Aktualizacja zadania', 'evaluate' => 'Sprawdzenie reguły'][$j['operation']] ?? $j['operation'],
+			'operation_label' => ['create' => 'Eksport', 'update' => 'Aktualizacja zadania', 'evaluate' => 'Sprawdzenie reguły', 'reconcile' => 'Ustalenie wyniku eksportu'][$j['operation']] ?? $j['operation'],
 			'status' => $j['status'],
 			'status_label' => self::STATUS_LABELS[$j['status']] ?? $j['status'],
 			'trigger' => $j['trigger_type'],

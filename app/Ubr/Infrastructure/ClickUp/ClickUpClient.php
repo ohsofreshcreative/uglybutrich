@@ -147,6 +147,16 @@ class ClickUpClient
 		return $this->request($token, 'GET', '/task/' . rawurlencode($taskId), null, ['include_markdown_description' => 'true'], $organizationId);
 	}
 
+	/**
+	 * Prompt 10.4.3 — zadania listy (ustalenie wyniku tworzenia po timeoucie: wyszukanie znacznika ubr-ref w opisie).
+	 *
+	 * @param array<string, scalar> $query
+	 */
+	public function listTasks(string $token, string $listId, array $query = [], ?int $organizationId = null): array
+	{
+		return $this->request($token, 'GET', '/list/' . rawurlencode($listId) . '/task', null, $query + ['include_markdown_description' => 'true', 'include_closed' => 'true', 'subtasks' => 'true', 'order_by' => 'created', 'reverse' => 'true', 'page' => 0], $organizationId);
+	}
+
 	public function setField(string $token, string $taskId, string $fieldId, mixed $value, ?int $organizationId = null): array
 	{
 		return $this->request($token, 'POST', '/task/' . rawurlencode($taskId) . '/field/' . rawurlencode($fieldId), ['value' => $value], [], $organizationId);

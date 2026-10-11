@@ -14,6 +14,7 @@ final class PipelineCatalog
 		'new' => ['label' => 'Nowy', 'description' => 'Dodany do Prospects, jeszcze nieopracowany.', 'closed' => false],
 		'qualified' => ['label' => 'Zakwalifikowany', 'description' => 'Sprawdzony i uznany za potencjalnego klienta.', 'closed' => false],
 		'to_contact' => ['label' => 'Do kontaktu', 'description' => 'Wybrano osobę lub kanał kontaktu.', 'closed' => false],
+		'mailing' => ['label' => 'Mailing', 'description' => 'Firma przeznaczona do sekwencji e-mail (wysyłka dopiero po zatwierdzeniu sekwencji).', 'closed' => false],
 		'contacted' => ['label' => 'Skontaktowano', 'description' => 'Wykonano pierwszą próbę kontaktu.', 'closed' => false],
 		'follow_up' => ['label' => 'Ponowienie', 'description' => 'Potrzebne ponowienie kontaktu.', 'closed' => false],
 		'in_discussion' => ['label' => 'W rozmowach', 'description' => 'Trwa rozmowa z firmą.', 'closed' => false],

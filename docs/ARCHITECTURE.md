@@ -913,3 +913,155 @@ dodatkowych zapytań do stron i bez dodatkowego zużycia kredytów Apollo.
 ### Bez połączeń telefonicznych
 - Usunięte linki `tel:` i przycisk „Zadzwoń” (Discover, Prospects, karta firmy, karta kontaktu, Action Center). Numery,
   kopiowanie, źródła, weryfikacja, wynik rozmowy, Cold Call Readiness i pipeline bez zmian.
+
+## 21. Discover Optimization + Website Age Intelligence + Claim-Based Decision Maker Finder + ClickUp Auto-Sync (Prompt 10.4.3)
+
+Migracja **M014** (schemat v14): nowe kolumny `ubr_companies` (`general_email*`, `site_age_*`, `site_launch_*`, `site_last_redesign_year`,
+`site_modernity`), `ubr_contact_research_runs.stage`, `ubr_clickup_exports.synced_fields` / `conflicts`. Tylko nowe kolumny i indeksy.
+
+### Worker weryfikacji (przyczyna przerw ~2:50 na Hostingerze, diagnostyka 10.4.1)
+LiteSpeed przerywał proces pętli zwrotnej po ~10 s, a blokada weryfikacji (170 s) zostawała. Teraz `VerificationRunner::tick()`:
+krok `UBR_VERIFY_STEP_SECONDS` (domyślnie 8 s) z łańcuchowaniem kolejnego kroku, blokada 60 s odnawiana po każdej firmie,
+zajęcie pozycji kolejki na 90 s, nieprzetworzone pozycje zwracane do kolejki (`VerificationQueueRepository::release`).
+Konfiguracja serwera (noabort / cron hPanel) — osobna decyzja właściciela (DIAG-prompt10-4-1).
+
+### Discover — tylko szybkie dane firmy
+- Weryfikacja zapisuje dodatkowo **ogólny e-mail firmy** (`GeneralEmailPicker`: biuro@ / kontakt@ / info@ …, potem działowe;
+  nigdy adres osobowy, noreply, RODO/faktury ani adres spoza domeny; nie przy domenie innego podmiotu). Bez dodatkowych zapytań —
+  adresy z tych samych stron (`WebsiteInspector` → `emails`).
+- Po weryfikacji: **Website Opportunity Score w tle** (`AnalysisService::queueAuto`, trigger `auto`, najniższy priorytet w kolejce
+  analiz, limit `UBR_AUTO_ANALYSIS_PER_DAY` = 300, wyłącznik `UBR_AUTO_ANALYSIS`). Po analizie → kolejka Website Age.
+- Decision Maker Finder / Apollo People / Matching / Phone Enrichment **nie są uruchamiane w Discover** (etap „Decydent: Po przejęciu”).
+- Lead Intelligence: listy Discover / Prospects już **nie zlecają** przeliczeń (usunięte `kick` z `DiscoveryService::results`
+  i `ProspectService::list`); przeliczenie po zmianie danych firmy (zdarzenia) i po zakończeniu wyszukiwania (`DiscoveryRunner`).
+
+### Website Age Intelligence
+- `Domain/Analysis/Age`: `FingerprintExtractor` (odcisk PROJEKTU: zasoby CSS/JS bez wersji, motyw/szablon, platforma, klasy
+  nagłówka/nawigacji/stopki, szkielet DOM, menu — bez treści), `FingerprintComparator` (Jaccard: zasoby .3, klasy .3,
+  struktura .25, menu .15; `same` ≥ 0,8, `minor` ≥ 0,45, inaczej `major`; zmiana motywu/platformy = `major`; < 8 cech = `uncertain`),
+  `TechSignals` (viewport, doctype, Flash, układ tabelowy, IE, stary jQuery/Bootstrap, MooTools/Prototype, lazy, WebP, bloki WP,
+  rok w stopce; daty z meta / Last-Modified tylko jako daty treści) → nowoczesność **osobno** od wieku, `AgeEstimator`.
+- `WaybackClient`: CDX (`collapse=timestamp:6`, tylko HTML 200, cache 14 dni) + kopie `id_` (bez paska archiwum), odstęp
+  `UBR_WAYBACK_INTERVAL_MS` (≥ 1000, domyślnie 2000), krótkie timeouty, 429/5xx/timeout = ponowienie później, dziennik `wayback` w `ubr_api_requests`.
+- `WebsiteAgeService::step()` — automat stanów zapisywany po każdym zapytaniu (transient `ubr_site_age_work_{id}`): obecna strona →
+  lista kopii → kopie reprezentatywne (najnowsza, ~1/3/5/8/12 lat, najstarsza; maks. 7) → doprecyzowanie granicy wyszukiwaniem
+  połówkowym (maks. 3 kopie; do ≤ 13 mies. i jednego roku) → wynik. Kopie z tym samym skrótem CDX bez pobierania, odciski kopii w cache 180 dni.
+- Wynik: wdrożenie (rok albo przedział, „co najmniej od” gdy brak wcześniejszego projektu w archiwum), wiek, ostatni redesign,
+  pewność HIGH (granica ≤ 13 mies. w jednym roku, jednoznaczne porównania) / MEDIUM / LOW (sprzeczne sygnały obniżają) / UNKNOWN,
+  status NEW (≤ 2 lata) / CURRENT / AGING / OUTDATED / UNKNOWN, dowody i źródła. Najstarsza kopia ≠ data rejestracji domeny
+  ani wdrożenia. Brak danych → UNKNOWN, bez wymyślania dat. Wiek nie zmienia Opportunity Score (propozycja wag — QA §16).
+- `WebsiteAgeRunner` — najniższy priorytet: ustępuje weryfikacji (kolejka lub blokada), jeden worker (blokada `ubr_site_age`),
+  krok jak weryfikacja; ponowienia 30 min / 3 h, maks. 3 próby → UNKNOWN; limit dzienny `UBR_SITE_AGE_DAILY_LIMIT` (150);
+  wynik aktualny 90 dni, „Sprawdź ponownie” po 24 h. Strona chwilowo nieosiągalna → ponowienie (nie zapisuje „nieznany” na 90 dni).
+- Nigdy przy renderowaniu list / paginacji / filtrach. Filtr Discover `site_age` = 5 / 7 / 10 (minimalny wiek projektu) / `unknown`.
+- REST: `POST /companies/{id}/site-age` (`analysis.run`, 202 = zlecone).
+
+### „Przejmij firmę” → Decision Maker Finder i ClickUp w tle
+- `OwnershipService::claim` — atomowe przypisanie jak wcześniej; tylko przy faktycznej zmianie właściciela `afterClaim()`:
+  `ClickUpExportService::queueForClaim` + `ContactResearchService::requestForClaim` (wyjątki łapane — przejęcie nie jest cofane).
+- `requestForClaim`: blokada `ubr_claim_dm_{id}`, bez duplikatów (trwająca analiza), aktualna analiza nie jest powtarzana,
+  zakaz kontaktu / „nie pasuje” / nieaktywna / zawieszona → bez analizy, brak źródeł, limit `UBR_CLAIM_RESEARCH_PER_DAY` (100),
+  „Ponów” z czasem ochronnym `UBR_CLAIM_RETRY_COOLDOWN_MINUTES` (60; po błędzie maks. 10 min) liczonym od ostatniej analizy.
+- Bez płatnych zapytań: przy przejęciu Apollo tylko z zapisanych wyników (`ApolloPeopleSource::saved`, wyłącznie pełne nazwiska);
+  nowe People Search przy przejęciu tylko za zgodą (`UBR_CLAIM_APOLLO_PEOPLE`). Phone Enrichment nigdy automatycznie.
+- Etapy w `stage`: queued → people → phones → done/failed. `claimStatus()`: Oczekuje / Szukamy decydenta / Szukamy numeru /
+  Znaleziono numer bezpośredni / Znaleziono decydenta bez telefonu / Nie znaleziono / Wymaga ręcznej weryfikacji (kandydaci bez
+  potwierdzenia, np. tylko Apollo) / Błąd / Wstrzymana. REST: `GET /companies/{id}/claim-status`, `POST /companies/{id}/claim-research`.
+
+### ClickUp — dwuetapowa synchronizacja jednego zadania
+- **Domyślnie wyłączone** — włącza właściciel / admin w Settings → ClickUp („Zadania po przejęciu firmy”, `POST /clickup/claim-sync`,
+  ustawienie organizacji `clickup_on_claim`) albo stała `UBR_CLICKUP_ON_CLAIM`. Połączenie pracownika z listą docelową, inaczej
+  połączenie wskazane przez właściciela (`clickup_claim_connection_id`; zadanie bez przypisanej osoby + notatka o braku mapowania).
+  Karta firmy pokazuje „Wyłączone” z informacją, kto włącza.
+- Etap 1 (przejęcie): nazwa = firma; Contact number = numer główny firmy; Lead email; Website; Source = „Ugly but Rich”;
+  Funnel step = „Leads”; przypisany pracownik; link do karty; Lead Potential — tylko pola istniejące i zmapowane.
+- Etap 2 (`contacts_done` → `queueClaimUpdate`): Contact = imię i nazwisko decydenta (Top 1, zweryfikowany/prawdopodobny,
+  bez zamaskowanych), Decision maker phone = WYŁĄCZNIE numer z potwierdzonym powiązaniem z osobą (VERIFIED, ≠ numer firmy).
+- `syncFields`: pole zmienione ręcznie w ClickUp nie jest nadpisywane — konflikt zapisany (`conflicts`, ostatnie 10) i widoczny
+  w karcie; puste pole uzupełniane. `synced_fields` przechowuje ostatnio wysłane wartości.
+- Idempotencja: znacznik `ubr-ref: o{org}-c{firma}-e{eksport}` w opisie; timeout / niejednoznaczna odpowiedź przy tworzeniu →
+  stan `unknown` + zadanie `reconcile` (szukanie po znaczniku); 2 negatywne sprawdzenia → jednorazowe ponowne utworzenie.
+- Pola nie są tworzone automatycznie: `ClickUpDestinationService::suggest()` proponuje mapowanie po nazwach i listę brakujących
+  pól (np. „Decision maker phone”, typ Phone) do utworzenia przez właściciela.
+
+## 22. Sequences — biblioteka kampanii, sekwencje firm i automatyczna wysyłka (Prompt 10.5)
+
+Moduł w motywie (bez osobnej wtyczki): `App\Ubr\Domain\Sequences`, `App\Ubr\Services\Sequences`, `App\Ubr\Infrastructure\Mail`,
+`SequenceController`, strona `/app/sequences/` (zakładki Campaigns / Active / Scheduled / Sent / Mailboxes / Settings) i zakładka
+„Mailing” w karcie firmy. Migracja **M015** (schemat v15) — tylko nowe tabele `ubr_seq_*`. Moduł nie synchronizuje niczego z ClickUp.
+
+### Dane
+- `ubr_seq_campaigns` / `ubr_seq_campaign_steps` — szablony: zakres `shared` (zespół; edycja `sequences.templates` = owner/admin)
+  albo `personal` (pracownik; widoczne też dla adminów). Status draft / active / archived; `version` +1 przy każdej zmianie kroków.
+- `ubr_seq_sequences` — sekwencja firmy = NIEZALEŻNA KOPIA kroków (snapshot) z `campaign_id`, `campaign_name`, `campaign_version`
+  jako informacją o źródle. Edycja kopii nie zmienia szablonu; zmiana szablonu nie zmienia sekwencji. Odbiorca (adres, źródło,
+  kontakt) zapisany w sekwencji — zmiana e-maila firmy w Discover go nie zmienia. `active_recipient = org|adres` dla stanów
+  zaplanowana / aktywna / wstrzymana / błąd (UNIQUE) → jedna aktywna sekwencja na adres w organizacji, także między firmami.
+- `ubr_seq_messages` — kroki sekwencji = harmonogram = trwała kolejka = historia: `status`, `scheduled_at`, `send_token`
+  (UNIQUE, identyfikator operacji wysyłki), `message_id`, wysłany temat / treść, nadawca, odbiorca, transport, odpowiedź SMTP, błąd.
+- `ubr_seq_mailboxes` — skrzynki pracowników (SMTP: host, port 465/587, szyfrowanie, login, hasło aplikacji zaszyfrowane
+  `SecretBox`; limity; wynik kontroli DNS). `ubr_seq_suppressions` — adresy wypisane / z trwałym błędem / wykluczone ręcznie.
+
+### Statusy
+Sekwencja: Szkic → Zaplanowana → Aktywna → Zakończona; Wstrzymana, Anulowana, Błąd (wymaga uwagi: wynik nieznany, brak danych,
+skrzynka, nieudane ponowienia). Wiadomość: Oczekuje, Zaplanowana, Wysyłanie, Przekazana do serwera poczty (≠ dostarczona),
+Błąd wysyłki, Anulowana, Wynik nieznany. Pipeline: nowy status „Mailing” — sam status niczego nie wysyła.
+
+### Przypisanie i uruchomienie
+Karta firmy → Mailing → „Przypisz kampanię”: kampania (albo pusta), odbiorca (ogólny e-mail firmy z zastrzeżeniem, e-mail
+decydenta `public_business_email`, adres ręczny), własna skrzynka → SZKIC. W szkicu: edycja / dodawanie / usuwanie / kolejność
+kroków, odstępy, okno wysyłki (dni, godziny, strefa), start i koniec, wartości ręczne zmiennych, podgląd z terminami.
+Start wymaga `confirm` i przechodzi kontrolę: własna przetestowana skrzynka (albo tryb testowy), adres poprawny technicznie
+(składnia + MX/A), brak blokad (rezygnacja, trwały błąd, DO_NOT_CONTACT / „nie pasuje”, BLOCKED, kontakt wyłączony), komplet
+zmiennych, konflikt adresu (409: zostaw / zakończ obecną i uruchom / anuluj). Uprawnienia: sekwencje firm, których prospekt należy
+do pracownika (owner/admin — zespół, `sequences.team`); wysyłka wyłącznie z WŁASNEJ skrzynki.
+
+### Personalizacja
+`TemplateRenderer`: `{{company_name}}`, `{{company_website}}`, `{{company_domain}}`, `{{company_city}}`, `{{contact_first_name}}`,
+`{{contact_last_name}}`, `{{contact_full_name}}`, `{{contact_position}}`, `{{sender_first_name}}`, `{{sender_last_name}}`,
+`{{sender_name}}`, `{{sender_email}}`, `{{unsubscribe_link}}`. Wiadomości jako tekst (text/plain) — wartości bez HTML / znaków
+sterujących, temat w jednej linii (ochrona nagłówków). Brak wartości lub nieznana zmienna → blokada startu i wysyłki (nigdy
+surowy placeholder). Wartości ręczne mają pierwszeństwo; nic nie jest zgadywane.
+
+### Harmonogram (`SendWindow`)
+Wszystkie terminy w UTC, okno w strefie sekwencji (domyślnie Pn–Pt 09:00–16:00 Europe/Warsaw). Termin poza oknem → najbliższy
+dozwolony moment (deterministycznie, z DST). Pierwszy krok: start (lub data rozpoczęcia) + odstęp; kolejne: FAKTYCZNA wysyłka
+poprzedniego + odstęp. Planowana jest tylko jedna (kolejna) wiadomość — po przestoju workera / wznowieniu wychodzi najwyżej jedna,
+następne liczone od niej. Data zakończenia → sekwencja zakończona bez pozostałych wiadomości.
+
+### Kolejka i worker (`SequenceRunner`)
+Trwałe zadania w MySQL (`ubr_seq_messages`), krok 8 s, blokada MySQL `ubr_seq_send` (jeden worker; zwalnia się po przerwaniu
+procesu) + blokada sekwencji `ubr_seq_{id}` (wyklucza równoległą edycję i wysyłkę). Uruchamianie: cron serwera
+`wp ubr queue-work --all` (zalecane — nie tylko WP-Cron), łańcuchowo pętlą zwrotną (`job=sequences`), zapasowo WP-Cron
+`ubr_sequences_tick` i healthcheck. Nigdy w żądaniu użytkownika. Przed wysyłką: włączona wysyłka (albo tryb testowy), okno,
+koniec, skrzynka, blokady, limity skrzynki (dziennie / godzinowo / minimalny odstęp — wiadomość przesuwana), komplet zmiennych.
+Zajęcie atomowe `scheduled → sending` z zapisanym `send_token` i Message-ID (`<ubr.{id}.{token}@domena-nadawcy>`) PRZED wysyłką.
+
+### Wynik wysyłki i duplikaty
+`SmtpTransport` (PHPMailer z WordPressa, bez `wp_mail()` — poczta systemowa i wtyczki SMTP nietknięte) śledzi etap rozmowy SMTP:
+błąd przed treścią / 4xx → `retry` (ponowienie 15 min / 1 h / 4 h z nowym identyfikatorem, potem błąd); 5xx → `failed`
+(550 / 5.1.x przy RCPT → adres zablokowany jako trwały błąd); 535 → `auth` (skrzynka „Błędne dane logowania”, wiadomość czeka);
+brak odpowiedzi PO przekazaniu treści → `unknown` = „Wynik nieznany”: bez automatycznego ponowienia, sekwencja w stanie błędu;
+pracownik sprawdza folder Wysłane i potwierdza „wysłana” (kolejny krok) albo „nie wyszła” (ponowna wysyłka po wznowieniu).
+Proces przerwany w trakcie (`sending` po czasie zajęcia 180 s) → też „Wynik nieznany”. `LogTransport` (tryb testowy, skrzynka
+testowa) buduje wiadomość i zapisuje historię bez wysyłki.
+
+### Rezygnacja i wykluczenia
+Stopka z `{{unsubscribe_link}}` (domyślnie włączona, tekst w ustawieniach) i nagłówki `List-Unsubscribe` +
+`List-Unsubscribe-Post: One-Click`. Link `/?ubr_unsubscribe=<org>.<sekwencja>.<HMAC>` (bez adresu w URL): GET — strona
+z potwierdzeniem, POST — trwała blokada adresu w organizacji i anulowanie jego aktywnych sekwencji. Pracownik może wypisać
+odbiorcę ręcznie; odblokowanie — owner/admin. Odpowiedzi nie są wykrywane (brak IMAP) — kampanię zatrzymuje się ręcznie.
+
+### Ustawienia i bezpieczeństwo
+Automatyczna wysyłka DOMYŚLNIE WYŁĄCZONA (`ubr_organizations.settings.sequences.sending_enabled`); włącza owner/admin po liście
+kontrolnej: skrzynka SMTP przetestowana (30 dni), worker uruchomiony w ostatnich 15 min, wiadomość w trybie testowym
+przetworzona, potwierdzenie zabezpieczeń przed duplikatami; `UBR_SEQUENCES_SENDING=false` w wp-config.php blokuje wysyłkę zawsze.
+Limity skrzynek domyślnie 30/dzień, 8/godz., odstęp 4 min (górne limity zespołu 100 / 25 — admin). Kontrola SPF / DKIM
+(typowe selektory) / DMARC — informacyjna. Hasła nigdy w odpowiedziach / logach; nieczytelne (zmiana klucza) → „Wymaga ponownego
+podania hasła”; odłączenie usuwa hasło i wstrzymuje sekwencje skrzynki (historia zostaje). Skrzynki testowe tylko poza produkcją
+lub z `UBR_MAIL_TEST_MAILBOXES`.
+
+### AI Outreach Assistant (przygotowanie)
+Interfejs `OutreachAssistant` (domyślnie `DisabledOutreachAssistant` → 501), endpoint `POST /sequences/messages/{id}/ai-suggest`
+i przycisk „Spersonalizuj z AI” w edytorze. Przyszła implementacja zaproponuje temat / treść kroku z zapisanych danych (analiza
+strony, Opportunity, Website Age, branża, wielkość); pracownik zatwierdza; płatne wywołania tylko za zgodą.

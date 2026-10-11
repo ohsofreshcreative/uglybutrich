@@ -186,7 +186,32 @@ Reguły bezpieczeństwa (obowiązkowe):
   * Lista Discover: nowe dane w wierszu = pole w `CompanyPresenter::row()`; zmiana stanu w innej tabeli wymaga `updated_at`
     (wykrywanie zmian w `changed_since`). Bez linków `tel:` w aplikacji.
   * Testy: `tests/performance-p104.php` (cache jest wyłączony w pozostałych testach filtrem `ubr/http/page_cache_enabled`).
-    Następna migracja: M014 (wdrożone M001–M013).
+- Discover / Website Age / „Przejmij firmę” / ClickUp (Prompt 10.4.3, ARCHITECTURE §21):
+  * Discover zbiera tylko szybkie dane firmy; Decision Maker Finder, Apollo People, Matching i Phone Enrichment NIE w Discover.
+    Listy (render, paginacja, filtry, sortowanie) nie zlecają Lead Intelligence, Website Age ani analiz.
+  * Website Age: tylko w tle (`WebsiteAgeRunner`, ustępuje weryfikacji), jedno zapytanie do archiwum na krok, stan po każdym
+    zapytaniu; nie wymyślaj dat (UNKNOWN), najstarsza kopia ≠ rejestracja domeny; wiek NIE zmienia wag Opportunity Score.
+  * Przejęcie: automatyzacja tylko przy faktycznej zmianie właściciela; błędy automatyzacji nie cofają przejęcia.
+    Bez płatnych zapytań Apollo (zapisane wyniki; `UBR_CLAIM_APOLLO_PEOPLE` tylko za zgodą); zakaz kontaktu / BLOCKED → bez analizy.
+  * ClickUp po przejęciu: domyślnie wyłączone (włącza owner/admin w Settings). Jedno zadanie na firmę (znacznik `ubr-ref`), ręczne zmiany w ClickUp nie są nadpisywane (konflikt), nie twórz pól
+    w ClickUp bez zgody; Decision maker phone tylko z potwierdzonego powiązania z osobą. Testy ClickUp wyłącznie na mockach.
+  * Stałe (opcjonalne): `UBR_VERIFY_STEP_SECONDS`, `UBR_AUTO_ANALYSIS`, `UBR_AUTO_ANALYSIS_PER_DAY`, `UBR_SITE_AGE`,
+    `UBR_SITE_AGE_DAILY_LIMIT`, `UBR_WAYBACK_ENABLED`, `UBR_WAYBACK_INTERVAL_MS`, `UBR_CLAIM_RESEARCH_PER_DAY`,
+    `UBR_CLAIM_RETRY_COOLDOWN_MINUTES`, `UBR_CLAIM_APOLLO_PEOPLE`, `UBR_CLICKUP_ON_CLAIM`.
+  * Testy: `tests/discover-claim-p1043.php` (Wayback / ClickUp / Apollo mockowane), `tests/js/claim.test.mjs`.
+- Sequences (Prompt 10.5, ARCHITECTURE §22):
+  * Wysyłka WYŁĄCZNIE w `SequenceRunner` (worker) — nigdy w żądaniu użytkownika, przy listach, filtrach ani paginacji.
+    Automatyczna wysyłka domyślnie wyłączona (lista kontrolna w Settings); `UBR_SEQUENCES_SENDING=false` = wyłącznik awaryjny.
+  * Nie ponawiaj automatycznie wiadomości o wyniku nieznanym (`unknown_result`) — tylko decyzja pracownika. Identyfikator operacji
+    (`send_token`) i Message-ID zapisuj PRZED przekazaniem do serwera poczty.
+  * Sekwencja firmy to kopia kampanii — nie łącz jej kroków z szablonem. Jedna aktywna sekwencja na adres (`active_recipient`).
+  * Respektuj blokady: rezygnacja, trwały błąd, DO_NOT_CONTACT / „nie pasuje”, BLOCKED, kontakt wyłączony. Nie zgaduj danych
+    personalizacji; wiadomości jako tekst.
+  * Nie używaj `wp_mail()` do sekwencji (konflikty z pocztą systemową) — transport `MailTransport` (SMTP / testowy).
+  * Testy: `tests/sequences-p105.php` (mock transportu + lokalny serwer `tests/tools/fake_smtp.py` na 127.0.0.1), `tests/js/sequences.test.mjs`.
+    Testy PHP uruchamiaj przy ZATRZYMANYM serwerze deweloperskim (pętla zwrotna innego procesu zakłóca kolejki).
+  * Stałe (opcjonalne): `UBR_SEQUENCES_SENDING`, `UBR_MAIL_TEST_MAILBOXES`.
+    Następna migracja: M016 (wdrożone M001–M015).
 - UWAGA BEZPIECZEŃSTWO: prywatny klucz SSH `key` (+ `key.pub`) był śledzony w repozytorium (commit `9b24093`); 10.10.2026 usunięty z drzewa
   (`git rm`, bez commita) — nadal jest w historii, wymaga unieważnienia. Nie czytać, nie używać, nie przywracać, nie dodawać do paczek. Plan rotacji i usunięcia z historii: `docs/SECURITY-KEY.md`
   (przepisanie historii Git tylko za zgodą właściciela). Nowe sekrety (ClickUp, klucz szyfrowania) wyłącznie w `wp-config.php`.

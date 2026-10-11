@@ -24,7 +24,66 @@ class ClickUpDestinationService
 		'contact_priority_score' => ['label' => 'Contact Priority Score', 'types' => ['number', 'short_text', 'text']],
 		'pipeline_status' => ['label' => 'Pipeline Status', 'types' => ['short_text', 'text', 'drop_down']],
 		'priority' => ['label' => 'Priority', 'types' => ['short_text', 'text', 'drop_down']],
+		// Prompt 10.4.3 — pola listy leadów (przejęcie firmy → zadanie, znalezienie decydenta → aktualizacja).
+		'contact' => ['label' => 'Contact (imię i nazwisko decydenta)', 'types' => ['short_text', 'text']],
+		'contact_number' => ['label' => 'Contact number (telefon firmowy)', 'types' => ['phone', 'short_text', 'text']],
+		'decision_maker_phone' => ['label' => 'Decision maker phone (telefon decydenta)', 'types' => ['phone', 'short_text', 'text']],
+		'lead_email' => ['label' => 'Lead email (ogólny e-mail firmy)', 'types' => ['email', 'short_text', 'text']],
+		'source' => ['label' => 'Source', 'types' => ['drop_down', 'short_text', 'text', 'labels']],
+		'funnel_step' => ['label' => 'Funnel step', 'types' => ['drop_down', 'short_text', 'text']],
+		'lead_potential_score' => ['label' => 'Lead Potential Score', 'types' => ['number', 'short_text', 'text']],
+		'company_card_url' => ['label' => 'Karta firmy w Ugly but Rich', 'types' => ['url', 'short_text', 'text']],
 	];
+
+	/** Prompt 10.4.3 — nazwy pól ClickUp rozpoznawane automatycznie (propozycja mapowania; zapis wymaga zatwierdzenia). */
+	public const SUGGEST_NAMES = [
+		'company_name' => ['company name', 'company', 'firma', 'nazwa firmy'],
+		'website' => ['website', 'strona', 'strona www', 'www', 'url'],
+		'opportunity_score' => ['opportunity score', 'website opportunity score'],
+		'contact' => ['contact', 'kontakt', 'decision maker', 'decydent', 'contact name', 'contact person'],
+		'contact_number' => ['contact number', 'phone', 'telefon', 'company phone', 'numer telefonu'],
+		'decision_maker_phone' => ['decision maker phone', 'dm phone', 'telefon decydenta', 'direct phone'],
+		'lead_email' => ['lead email', 'email', 'e-mail', 'company email'],
+		'source' => ['source', 'źródło', 'zrodlo', 'lead source'],
+		'funnel_step' => ['funnel step', 'funnel', 'etap', 'stage'],
+		'lead_potential_score' => ['lead potential score', 'lead score', 'lead potential'],
+		'company_card_url' => ['ugly but rich', 'ubr link', 'karta firmy', 'company card'],
+	];
+
+	/**
+	 * Propozycja mapowania po nazwach pól listy (dokładna nazwa ma pierwszeństwo, typ musi być zgodny). Brak pola →
+	 * pozycja `missing` (konfiguracja do zatwierdzenia przez użytkownika — aplikacja nie tworzy pól w ClickUp).
+	 *
+	 * @param list<array{id: string, name: string, type: string}> $fields
+	 * @return array{suggested: array<string, string>, missing: list<array{key: string, label: string, proposed_type: string}>}
+	 */
+	public static function suggest(array $fields): array
+	{
+		$suggested = [];
+		$used = [];
+
+		foreach (self::SUGGEST_NAMES as $key => $names) {
+			foreach ($names as $name) {
+				foreach ($fields as $f) {
+					if (! isset($used[$f['id']]) && mb_strtolower(trim((string) $f['name'])) === $name && in_array((string) $f['type'], self::MAPPABLE[$key]['types'], true)) {
+						$suggested[$key] = (string) $f['id'];
+						$used[$f['id']] = true;
+						break 2;
+					}
+				}
+			}
+		}
+
+		$missing = [];
+
+		foreach (['contact', 'contact_number', 'decision_maker_phone', 'lead_email', 'website', 'source', 'funnel_step'] as $key) {
+			if (! isset($suggested[$key])) {
+				$missing[] = ['key' => $key, 'label' => self::MAPPABLE[$key]['label'], 'proposed_type' => self::MAPPABLE[$key]['types'][0]];
+			}
+		}
+
+		return ['suggested' => $suggested, 'missing' => $missing];
+	}
 
 	public function __construct(private ClickUpRepository $repo, private ClickUpClient $client, private ClickUpOAuthService $oauth)
 	{
@@ -70,7 +129,13 @@ class ClickUpDestinationService
 			$items[] = $row;
 		}
 
-		return ['level' => $level, 'items' => $items, 'empty' => $items === []];
+		$out = ['level' => $level, 'items' => $items, 'empty' => $items === []];
+
+		if ($level === 'fields') {
+			$out += self::suggest($items);
+		}
+
+		return $out;
 	}
 
 	/**

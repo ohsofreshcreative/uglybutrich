@@ -64,6 +64,18 @@ final class Tables
 
 	public const PAGE_CACHE = 'ubr_page_cache';
 
+	public const SEQ_CAMPAIGNS = 'ubr_seq_campaigns';
+
+	public const SEQ_CAMPAIGN_STEPS = 'ubr_seq_campaign_steps';
+
+	public const SEQ_SEQUENCES = 'ubr_seq_sequences';
+
+	public const SEQ_MESSAGES = 'ubr_seq_messages';
+
+	public const SEQ_MAILBOXES = 'ubr_seq_mailboxes';
+
+	public const SEQ_SUPPRESSIONS = 'ubr_seq_suppressions';
+
 	public static function name(string $table): string
 	{
 		global $wpdb;
@@ -119,6 +131,12 @@ final class Tables
 			self::APOLLO_MATCHES,
 			self::APOLLO_MATCH_HISTORY,
 			self::PAGE_CACHE,
+			self::SEQ_CAMPAIGNS,
+			self::SEQ_CAMPAIGN_STEPS,
+			self::SEQ_SEQUENCES,
+			self::SEQ_MESSAGES,
+			self::SEQ_MAILBOXES,
+			self::SEQ_SUPPRESSIONS,
 		];
 	}
 }

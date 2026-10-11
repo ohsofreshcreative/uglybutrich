@@ -28,6 +28,22 @@ class AnalysisController
 		return new WP_REST_Response($result, $result['queued'] ? 202 : 200);
 	}
 
+	/** Prompt 10.4.3 — zlecenie Website Age Intelligence dla firmy (w tle; ponowienie z ograniczeniem 24 h). */
+	public function siteAge(WP_REST_Request $request): WP_REST_Response
+	{
+		$ctx = $this->tenants->require('analysis.run');
+		$id = (int) $request['id'];
+		$companies = app(\App\Ubr\Infrastructure\Repositories\CompanyRepository::class);
+
+		if (! $companies->find($id) || ! $companies->isVisibleTo($id, $ctx->organizationId)) {
+			return new WP_REST_Response(['code' => 'ubr_not_found', 'message' => 'Nie znaleziono firmy.'], 404);
+		}
+
+		$result = app(\App\Ubr\Services\WebsiteAgeService::class)->queue($id, (bool) $request->get_param('force'));
+
+		return new WP_REST_Response($result + ['site_age' => \App\Ubr\Services\WebsiteAgeService::present($companies->find($id))], $result['queued'] ? 202 : 200);
+	}
+
 	public function forCompany(WP_REST_Request $request): array
 	{
 		return $this->analyses->forCompany($this->tenants->require('analysis.view'), (int) $request['id']);

@@ -95,7 +95,7 @@ class AnalysisRepository
 
 		for ($i = 0; $i < 3; $i++) {
 			$row = $this->db->row(
-				"SELECT id FROM {$this->t()} WHERE next_attempt_at <= %s AND (status = 'queued' OR (status = 'running' AND locked_until < %s)) ORDER BY next_attempt_at ASC, id ASC LIMIT 1",
+				"SELECT id FROM {$this->t()} WHERE next_attempt_at <= %s AND (status = 'queued' OR (status = 'running' AND locked_until < %s)) ORDER BY (trigger_type = 'auto') ASC, next_attempt_at ASC, id ASC LIMIT 1",
 				$now,
 				$now
 			);
@@ -152,6 +152,16 @@ class AnalysisRepository
 	public function countRunning(): int
 	{
 		return (int) $this->db->value("SELECT COUNT(*) FROM {$this->t()} WHERE status = 'running' AND locked_until >= %s", Db::now());
+	}
+
+	/** Prompt 10.4.3 — liczba analiz automatycznych (Discover) organizacji od podanej chwili (osobny limit dzienny). */
+	public function countAutoForOrganizationSince(int $organizationId, string $sinceUtc): int
+	{
+		return (int) $this->db->value(
+			"SELECT COUNT(*) FROM {$this->t()} WHERE organization_id = %d AND trigger_type = 'auto' AND created_at >= %s",
+			$organizationId,
+			$sinceUtc
+		);
 	}
 
 	public function countForOrganizationSince(int $organizationId, string $sinceUtc): int

@@ -113,6 +113,52 @@ class ApolloPeopleSource
 		return ['candidates' => $out, 'error' => null, 'state' => 'enabled'];
 	}
 
+	/**
+	 * Prompt 10.4.3 — kandydaci z ZAPISANYCH wyników Apollo (Contact Matching, `ubr_apollo_people`) bez żadnego zapytania
+	 * do Apollo: tylko osoby z pełnym (niezamaskowanym) nazwiskiem, powiązane z firmą i z rozpoznanym stanowiskiem.
+	 * Zamaskowane nazwiska nigdy nie tworzą kontaktów (ani automatycznych dopasowań).
+	 *
+	 * @return array{candidates: list<array<string, mixed>>, error: ?string, state: string}
+	 */
+	public function saved(int $companyId): array
+	{
+		$db = app(\App\Ubr\Infrastructure\Database\Db::class);
+		$rows = $db->rows("SELECT * FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::APOLLO_PEOPLE)} WHERE company_id = %d AND belongs_to_company = 1 ORDER BY id ASC LIMIT 50", $companyId);
+		$out = [];
+
+		foreach ($rows as $p) {
+			$last = (string) ($p['last_name'] ?? '');
+
+			if ($last === '' || str_contains($last . (string) ($p['last_name_obfuscated'] ?? ''), '*') || empty($p['title'])) {
+				continue;
+			}
+
+			$name = PersonName::parse(trim((string) $p['first_name'] . ' ' . $last));
+			$role = RoleCatalog::match((string) $p['title']);
+
+			if (! $name || ! $role) {
+				continue;
+			}
+
+			$out[] = [
+				'name' => $name, 'title' => mb_substr((string) $p['title'], 0, 200), 'role' => $role, 'source_type' => 'APOLLO',
+				'source_url' => null, 'source_title' => 'Apollo (zapisane wyniki)', 'page_kind' => 'apollo',
+				'excerpt' => mb_substr($name->full() . ' · ' . $p['title'], 0, 300),
+				'email' => null, 'role_email' => null, 'phone' => null, 'profile' => null,
+				'former' => false, 'other_entity' => null, 'obfuscated' => false,
+				'external_provider' => 'apollo', 'external_id' => preg_match('/^[A-Za-z0-9]{6,64}$/', (string) $p['apollo_person_id']) ? (string) $p['apollo_person_id'] : null,
+			];
+		}
+
+		return ['candidates' => $out, 'error' => null, 'state' => 'saved'];
+	}
+
+	/** Prompt 10.4.3 — nowe People API Search przy przejęciu firmy tylko po świadomym włączeniu (UBR_CLAIM_APOLLO_PEOPLE). */
+	public static function claimSearchAllowed(): bool
+	{
+		return self::enabled() && (bool) apply_filters('ubr/contacts/claim_apollo_people', defined('UBR_CLAIM_APOLLO_PEOPLE') && constant('UBR_CLAIM_APOLLO_PEOPLE'));
+	}
+
 	/** Liczba osób na zapytanie w Apollo Contact Matching (Prompt 10.3) — taka sama jak w teście kontrolnym (wspólny cache). */
 	public const MATCHING_PER_PAGE = 10;
 

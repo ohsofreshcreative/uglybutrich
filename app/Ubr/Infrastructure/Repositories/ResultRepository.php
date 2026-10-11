@@ -154,6 +154,22 @@ class ResultRepository
 	 *
 	 * @return array{items: list<array<string, mixed>>, total: int}
 	 */
+	/**
+	 * Filtr wieku strony: 5 / 7 / 10 = co najmniej tyle lat (minimalny szacowany wiek obecnego projektu), unknown = nieustalony.
+	 *
+	 * @param list<mixed> $args
+	 */
+	public static function siteAgeWhere(string $value, array &$args): string
+	{
+		if (in_array($value, ['5', '7', '10'], true)) {
+			$args[] = (int) $value;
+
+			return " AND c.site_age_status IN ('NEW','CURRENT','AGING','OUTDATED') AND c.site_age_years >= %d";
+		}
+
+		return $value === 'unknown' ? " AND (c.site_age_status IS NULL OR c.site_age_status = 'UNKNOWN')" : '';
+	}
+
 	public function paginate(int $searchId, int $organizationId, int $page, int $perPage, string $filter = 'all', string $sort = 'relevance', array $extra = []): array
 	{
 		$where = 'r.search_id = %d AND r.organization_id = %d';
@@ -174,6 +190,9 @@ class ResultRepository
 			$where .= ' AND c.findings_count >= %d';
 			$args[] = max(0, min(100, (int) $extra['min_findings']));
 		}
+
+		// Prompt 10.4.3 — wiek strony (zapisane wyniki Website Age Intelligence; filtr nie uruchamia analiz).
+		$where .= self::siteAgeWhere((string) ($extra['site_age'] ?? ''), $args);
 
 		// Filtry Decision Maker Findera.
 		$where .= ContactFilters::where($extra, $args);

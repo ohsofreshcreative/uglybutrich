@@ -150,10 +150,34 @@
 										</select>
 									</div>
 								</template>
+								{{-- Prompt 10.4.3: brakujące pola listy leadów — propozycja konfiguracji (aplikacja nie tworzy pól w ClickUp) --}}
+								<div class="sm:col-span-2 rounded-lg bg-gold-soft text-gold-deep px-3 py-2 text-[12px]" x-show="fieldSuggestions && fieldSuggestions.missing.length" data-clickup-missing>
+									<strong>Brak pól na liście:</strong>
+									<template x-for="m in (fieldSuggestions?.missing || [])" :key="m.key"><span class="block" x-text="m.label + ' — proponowany typ pola: ' + m.proposed_type"></span></template>
+									Utwórz je w ClickUp (lista docelowa) albo zmapuj istniejące pola — automatycznie niczego nie tworzymy.
+								</div>
 								<div class="sm:col-span-2" x-show="fields.length"><button class="ubr-btn-ghost ubr-btn-sm" :disabled="busy">Zapisz mapowanie</button></div>
 							</form>
 						</template>
 					</div>
+				</div>
+			</template>
+
+			{{-- Prompt 10.4.3: zadanie ClickUp po „Przejmij firmę” (ustawienie organizacji, domyślnie wyłączone) --}}
+			<template x-if="status.claim_sync">
+				<div class="rounded-xl border border-line p-4 space-y-2" data-clickup-claim-sync>
+					<div class="flex flex-wrap items-center gap-2">
+						<h3 class="font-extrabold text-[14px] flex-1">Zadania po przejęciu firmy</h3>
+						<span :class="status.claim_sync.enabled ? 'ubr-badge-confirmed' : 'ubr-badge-unavailable'" x-text="status.claim_sync.enabled ? 'Włączone' : 'Wyłączone'"></span>
+					</div>
+					<p class="text-[12px] text-ink-muted">Po kliknięciu „Przejmij firmę” aplikacja tworzy jedno zadanie na liście docelowej pracownika (nazwa firmy, telefon firmowy, e-mail, strona, źródło, etap „Leads”), a po znalezieniu decydenta uzupełnia w nim kontakt. Ręczne zmiany w ClickUp nie są nadpisywane.</p>
+					<template x-if="status.claim_sync.can_manage">
+						<div class="space-y-2 text-[13px]">
+							<label class="flex items-start gap-2"><input type="checkbox" class="mt-0.5" :checked="status.claim_sync.org_setting === true || (status.claim_sync.org_setting === null && status.claim_sync.enabled)" @change="saveClaimSync({ enabled: $event.target.checked })" :disabled="busy" data-claim-sync-toggle> <span>Twórz zadanie w ClickUp po przejęciu firmy (cała organizacja)</span></label>
+							<label class="flex items-start gap-2" x-show="status.connected && status.destination?.list_id"><input type="checkbox" class="mt-0.5" :checked="status.claim_sync.fallback_is_mine" @change="saveClaimSync({ use_my_connection: $event.target.checked })" :disabled="busy"> <span>Używaj mojego połączenia i listy dla pracowników bez własnego połączenia ClickUp (zadanie bez przypisanej osoby)</span></label>
+						</div>
+					</template>
+					<p class="text-[12px] text-ink-muted" x-show="!status.claim_sync.can_manage">Ustawienie zmienia właściciel lub administrator organizacji.</p>
 				</div>
 			</template>
 

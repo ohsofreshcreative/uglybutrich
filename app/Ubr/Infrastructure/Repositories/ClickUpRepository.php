@@ -103,6 +103,28 @@ class ClickUpRepository
 	 * @param array<string, mixed> $data
 	 * @return int|null null = już istnieje (wyścig) — nie tworzymy drugiego
 	 */
+	/**
+	 * Prompt 10.4.3 — eksporty firmy we wszystkich organizacjach (aktualizacja zadań po zakończeniu analizy decydenta).
+	 *
+	 * @return list<array<string, mixed>>
+	 */
+	public function exportsForCompanyAllOrgs(int $companyId): array
+	{
+		return $this->db->rows("SELECT * FROM {$this->db->table(Tables::CLICKUP_EXPORTS)} WHERE company_id = %d", $companyId);
+	}
+
+	/** Anulowanie zadań w kolejce dla połączenia (rozłączenie). */
+	public function cancelQueuedJobs(int $connectionId, string $message): int
+	{
+		return $this->db->execute(
+			"UPDATE {$this->db->table(Tables::CLICKUP_JOBS)} SET status = 'cancelled', error_message = %s, finished_at = %s, updated_at = %s WHERE connection_id = %d AND status = 'queued'",
+			$message,
+			Db::now(),
+			Db::now(),
+			$connectionId
+		);
+	}
+
 	public function reserveExport(array $data): ?int
 	{
 		$now = Db::now();

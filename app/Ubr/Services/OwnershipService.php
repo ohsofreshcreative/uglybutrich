@@ -89,7 +89,34 @@ class OwnershipService
 
 		app(PipelineService::class)->forgetStats($ctx->organizationId);
 
-		return ['prospect_id' => $id, 'claimed' => $changed, 'created' => (bool) $result['created'], 'restored' => (bool) $result['restored'], 'owner_user_id' => $ctx->userId];
+		// Prompt 10.4.3 — przejęcie uruchamia w tle zadanie ClickUp i analizę decydenta (tylko przy faktycznym przejęciu;
+		// ponowne kliknięcie nie dubluje zadań). Błąd automatyzacji nigdy nie cofa przejęcia.
+		$automation = ($changed || $result['created'] || $result['restored']) ? $this->afterClaim($ctx, $companyId, $id) : null;
+
+		return ['prospect_id' => $id, 'claimed' => $changed, 'created' => (bool) $result['created'], 'restored' => (bool) $result['restored'], 'owner_user_id' => $ctx->userId, 'automation' => $automation];
+	}
+
+	/**
+	 * @return array{clickup: ?array<string, mixed>, research: ?array<string, mixed>}
+	 */
+	public function afterClaim(TenantContext $ctx, int $companyId, int $prospectId): array
+	{
+		$out = ['clickup' => null, 'research' => null];
+
+		if (! apply_filters('ubr/claim/automation', true, $companyId, $ctx->organizationId)) {
+			return $out;
+		}
+
+		$out['clickup'] = app(ClickUpExportService::class)->queueForClaim($ctx, $companyId, $prospectId);
+
+		try {
+			$out['research'] = app(ContactResearchService::class)->requestForClaim($ctx, $companyId);
+		} catch (\Throwable $e) {
+			error_log('[ubr] Claim research for company #' . $companyId . ' not queued: ' . $e->getMessage());
+			$out['research'] = ['queued' => false, 'reason' => 'error', 'message' => 'Nie udało się zlecić analizy decydenta — użyj „Ponów wyszukiwanie decydenta”.'];
+		}
+
+		return $out;
 	}
 
 	/**

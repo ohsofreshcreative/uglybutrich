@@ -149,11 +149,91 @@ class ClickUpTaskBuilder
 		$lines[] = '- Ugly but Rich: ' . add_query_arg('company', $companyId, \App\Ubr\Http\AppPages::url('prospects'));
 		$lines[] = '';
 		$lines[] = self::END;
-		$block = implode("\n", $lines);
-		$template = (string) ($settings['task_name_template'] ?? '{company} — Website Redesign Opportunity');
-		$name = mb_substr(strtr($template, ['{company}' => $c['name'], '{domain}' => (string) $c['domain'], '{city}' => (string) $c['city']]), 0, 250);
+		$lead = $this->leadValues($ctx, $c, $contacts);
 
-		return ['name' => $name, 'block' => $block, 'markdown' => $block, 'fields' => $this->fieldValues($c, $relevance, $prospect, (array) ($settings['field_mapping'] ?? [])), 'hash' => self::hash($block)];
+		// Prompt 10.4.3 — stanowisko decydenta i opiekun firmy w opisie (pole Contact zawiera wyłącznie imię i nazwisko).
+		$owner = $prospect && ! empty($prospect['owner_user_id']) ? get_userdata((int) $prospect['owner_user_id']) : null;
+		$extra = array_filter([
+			$lead['contact'] ? '- Decydent (pole Contact): ' . $this->md($lead['contact']) . ($lead['_dm_title'] ? ' — ' . $this->md((string) $lead['_dm_title']) : '') : null,
+			$owner ? '- Opiekun w Ugly but Rich: ' . $this->md($owner->display_name) : null,
+		]);
+
+		if ($extra) {
+			array_splice($lines, array_search(self::END, $lines, true) - 1, 0, array_merge(['', '**LEAD**'], $extra));
+		}
+
+		$block = implode("\n", $lines);
+		// Prompt 10.4.3 — domyślnie nazwa zadania = nazwa firmy (zapisany szablon użytkownika ma pierwszeństwo).
+		$template = (string) ($settings['task_name_template'] ?? '{company}');
+		$name = mb_substr(strtr($template, ['{company}' => $c['name'], '{domain}' => (string) $c['domain'], '{city}' => (string) $c['city']]), 0, 250);
+		$mapped = $this->mappedValues($c, $relevance, $prospect, (array) ($settings['field_mapping'] ?? []), $lead);
+
+		return ['name' => $name, 'block' => $block, 'markdown' => $block, 'fields' => array_column(array_values($mapped), 'value', 'field_id'), 'mapped' => $mapped, 'lead' => $lead, 'hash' => self::hash($block)];
+	}
+
+	/**
+	 * Prompt 10.4.3 — dane leadu do pól ClickUp:
+	 * - Contact: imię i nazwisko najlepszego decydenta (Top 1, zweryfikowany lub prawdopodobny, nazwisko niezamaskowane),
+	 * - Decision maker phone: wyłącznie numer powiązany z tą osobą z potwierdzeniem (VERIFIED) albo odblokowany w Apollo
+	 *   dla tej osoby; nigdy telefon centrali / firmowy; niepewne (LIKELY / UNCERTAIN) — do ręcznej weryfikacji,
+	 * - Contact number: główny telefon firmowy (Discover), Lead email: ogólny e-mail firmy, Source / Funnel step stałe.
+	 *
+	 * @param array<string, mixed> $c
+	 * @param array<string, mixed>|null $contacts widok Decision Makers organizacji
+	 * @return array<string, mixed>
+	 */
+	public function leadValues(TenantContext $ctx, array $c, ?array $contacts): array
+	{
+		$companyId = (int) $c['id'];
+		$rows = app(\App\Ubr\Infrastructure\Repositories\CompanyPhoneRepository::class)->forCompanies([$companyId], $ctx->organizationId)[$companyId] ?? [];
+		$main = CompanyPhoneService::mainFor($rows);
+		$mainE164 = $main ? (string) ($main['e164'] ?? '') : '';
+		$dm = null;
+		$title = null;
+		$phone = null;
+		$top = $contacts['top'][0] ?? null;
+
+		if ($top
+			&& (int) ($top['rank_position'] ?? 0) === 1
+			&& in_array($top['verification']['status'] ?? '', ['verified', 'probable'], true)
+			&& ! str_contains((string) $top['full_name'], '*')
+			&& preg_match('/\S+\s+\S+/u', (string) $top['full_name'])
+		) {
+			$dm = (string) $top['full_name'];
+			$title = $top['job_title'] ?: null;
+			$links = app(\App\Ubr\Infrastructure\Repositories\ContactPhoneLinkRepository::class)->effectiveFor($ctx->organizationId, [(int) $top['id']])[(int) $top['id']] ?? [];
+
+			foreach ($links as $l) {
+				if (($l['link_status'] ?? '') === 'VERIFIED' && (string) $l['e164'] !== '' && (string) $l['e164'] !== $mainE164) {
+					$phone = (string) $l['e164'];
+					break;
+				}
+			}
+
+			if ($phone === null) {
+				$revealed = (string) app(\App\Ubr\Infrastructure\Database\Db::class)->value(
+					'SELECT e164 FROM ' . app(\App\Ubr\Infrastructure\Database\Db::class)->table(\App\Ubr\Infrastructure\Database\Tables::CONTACT_PHONES) . ' WHERE organization_id = %d AND contact_id = %d AND e164 <> %s ORDER BY id DESC LIMIT 1',
+					$ctx->organizationId,
+					(int) $top['id'],
+					$mainE164
+				);
+				$phone = $revealed !== '' ? $revealed : null;
+			}
+		}
+
+		$li = app(\App\Ubr\Infrastructure\Repositories\LeadIntelligenceRepository::class)->current($ctx->organizationId, $companyId);
+
+		return [
+			'contact' => $dm,
+			'decision_maker_phone' => $phone,
+			'contact_number' => $mainE164 !== '' ? $mainE164 : null,
+			'lead_email' => CompanyPresenter::generalEmail($c),
+			'source' => 'Ugly but Rich',
+			'funnel_step' => 'Leads',
+			'lead_potential_score' => $li && $li['lead_score'] !== null ? (int) $li['lead_score'] : null,
+			'company_card_url' => add_query_arg('company', $companyId, \App\Ubr\Http\AppPages::url('prospects')),
+			'_dm_title' => $title,
+		];
 	}
 
 	/**
@@ -164,9 +244,23 @@ class ClickUpTaskBuilder
 	 * @param array<string, array<string, mixed>> $mapping
 	 * @return array<string, mixed> field_id => wartość
 	 */
-	public function fieldValues(array $c, ?int $relevance, ?array $prospect, array $mapping): array
+	public function fieldValues(array $c, ?int $relevance, ?array $prospect, array $mapping, array $extra = []): array
 	{
-		$raw = [
+		return array_column(array_values($this->mappedValues($c, $relevance, $prospect, $mapping, $extra)), 'value', 'field_id');
+	}
+
+	/**
+	 * Wartości pól według klucza aplikacji (do ochrony ręcznych zmian: porównanie z ostatnio zapisanymi wartościami).
+	 *
+	 * @param array<string, mixed> $c
+	 * @param array<string, mixed>|null $prospect
+	 * @param array<string, array<string, mixed>> $mapping
+	 * @param array<string, mixed> $extra wartości leadu (leadValues)
+	 * @return array<string, array{field_id: string, value: mixed, type: string}>
+	 */
+	public function mappedValues(array $c, ?int $relevance, ?array $prospect, array $mapping, array $extra = []): array
+	{
+		$raw = array_diff_key($extra, ['_dm_title' => true]) + [
 			'company_name' => $c['name'],
 			'website' => $c['website_url'] ?: null,
 			'relevance_score' => $relevance,
@@ -184,21 +278,21 @@ class ClickUpTaskBuilder
 				continue;
 			}
 
-			if ($m['type'] === 'drop_down') {
+			if ($m['type'] === 'drop_down' || $m['type'] === 'labels') {
 				$option = array_values(array_filter((array) $m['options'], fn ($o) => mb_strtolower($o['name']) === mb_strtolower((string) $value)))[0] ?? null;
 
 				if (! $option) {
 					continue;
 				}
 
-				$value = $option['id'];
+				$value = $m['type'] === 'labels' ? [$option['id']] : $option['id'];
 			} elseif ($m['type'] === 'number') {
 				$value = (int) $value;
 			} else {
 				$value = (string) $value;
 			}
 
-			$out[$m['field_id']] = $value;
+			$out[$key] = ['field_id' => (string) $m['field_id'], 'value' => $value, 'type' => (string) $m['type']];
 		}
 
 		return $out;

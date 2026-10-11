@@ -1511,6 +1511,8 @@ try {
 
 	/* PERFORMANCE & PROGRESSIVE DISCOVERY (Prompt 10.4) — cache stron, równoległe pobieranie, statusy, lekkie odświeżanie. */
 	require __DIR__ . '/performance-p104.php';
+	require __DIR__ . '/discover-claim-p1043.php';
+	require __DIR__ . '/sequences-p105.php';
 
 	/* ------------------------------------------------------------------ */
 	UbrT::group('Kolejka — wykrywanie zablokowanych zadań');
@@ -1531,6 +1533,13 @@ try {
 } finally {
 	/* Sprzątanie danych testowych. */
 	foreach ($created['orgs'] as $orgId) {
+		// Prompt 10.5 — tabele Sequences nie mają kluczy obcych (historia wysyłek) — sprzątanie jawne.
+		$wpdb->query($wpdb->prepare("DELETE st FROM {$db->table(Tables::SEQ_CAMPAIGN_STEPS)} st JOIN {$db->table(Tables::SEQ_CAMPAIGNS)} c ON c.id = st.campaign_id WHERE c.organization_id = %d", $orgId));
+
+		foreach ([Tables::SEQ_CAMPAIGNS, Tables::SEQ_SEQUENCES, Tables::SEQ_MESSAGES, Tables::SEQ_MAILBOXES, Tables::SEQ_SUPPRESSIONS] as $seqTable) {
+			$wpdb->delete($db->table($seqTable), ['organization_id' => $orgId]);
+		}
+
 		delete_option('ubr_ac_ov_' . $orgId); // wersja cache Action Center organizacji testowej
 		$wpdb->delete($db->table(Tables::CLICKUP_JOBS), ['organization_id' => $orgId]); // kolejka ClickUp nie ma klucza obcego (historia)
 		$wpdb->delete($db->table(Tables::ORGANIZATIONS), ['id' => $orgId]); // kaskada: członkowie, wyszukiwania, wyniki, prospekty
@@ -1563,7 +1572,7 @@ try {
 	}
 
 	foreach ((array) _get_cron_array() as $ts => $hooks) {
-		foreach (['ubr_discovery_tick', 'ubr_verification_tick', 'ubr_analysis_tick', 'ubr_contacts_tick', 'ubr_clickup_tick', 'ubr_lead_tick', 'ubr_phones_tick'] as $hook) {
+		foreach (['ubr_discovery_tick', 'ubr_verification_tick', 'ubr_analysis_tick', 'ubr_contacts_tick', 'ubr_clickup_tick', 'ubr_lead_tick', 'ubr_phones_tick', 'ubr_site_age_tick', 'ubr_sequences_tick'] as $hook) {
 			foreach ((array) ($hooks[$hook] ?? []) as $event) {
 				wp_unschedule_event($ts, $hook, $event['args']);
 			}
@@ -1571,6 +1580,7 @@ try {
 	}
 
 	delete_option('ubr_verify_lock');
+	delete_option('ubr_site_age_day'); // licznik analiz wieku stron zużyty przez testy
 	delete_option('ubr_clickup_lock');
 	delete_option('ubr_lead_lock');
 

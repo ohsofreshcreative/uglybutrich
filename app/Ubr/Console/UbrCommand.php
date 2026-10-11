@@ -289,6 +289,9 @@ class UbrCommand
 			'ClickUp' => fn () => app(\App\Ubr\Services\ClickUpRunner::class)->tick(false),
 			'Lead Intelligence' => fn () => app(\App\Ubr\Services\LeadIntelligenceRunner::class)->tick(\App\Ubr\Services\LeadIntelligenceRunner::BATCH, false),
 			'telefony (Apollo)' => fn () => app(\App\Ubr\Services\ApolloPhoneRunner::class)->tick(false),
+			'wiek stron' => fn () => app(\App\Ubr\Services\WebsiteAgeRunner::class)->tick(20, false),
+			// Prompt 10.5 — wysyłka sekwencji (zalecane wywołanie przez cron serwera, nie tylko WP-Cron).
+			'sekwencje e-mail' => fn () => app(\App\Ubr\Services\Sequences\SequenceRunner::class)->tick(20, false),
 		];
 
 		foreach ($steps as $label => $step) {

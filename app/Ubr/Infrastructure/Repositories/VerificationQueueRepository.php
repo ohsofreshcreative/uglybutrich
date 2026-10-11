@@ -98,6 +98,19 @@ class VerificationQueueRepository
 		return null;
 	}
 
+	/**
+	 * Prompt 10.4.3 — zwrot pobranej, a nieprzetworzonej pozycji do kolejki (koniec budżetu kroku workera):
+	 * bez zużywania próby i bez czekania na wygaśnięcie blokady.
+	 */
+	public function release(int $id): void
+	{
+		$this->db->execute(
+			"UPDATE {$this->t()} SET status = 'queued', locked_until = NULL, attempts = GREATEST(attempts - 1, 0), updated_at = %s WHERE id = %d AND status = 'running'",
+			Db::now(),
+			$id
+		);
+	}
+
 	public function complete(int $id): void
 	{
 		$this->db->delete(Tables::VERIFICATION_QUEUE, ['id' => $id]);

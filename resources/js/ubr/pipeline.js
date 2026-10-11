@@ -328,7 +328,17 @@ export function registerPipeline(Alpine) {
       ['contact_priority_score', 'Contact Priority Score'],
       ['pipeline_status', 'Pipeline Status'],
       ['priority', 'Priority'],
+      // Prompt 10.4.3 — pola listy leadów (zadanie po przejęciu, aktualizacja po znalezieniu decydenta).
+      ['contact', 'Contact (imię i nazwisko decydenta)'],
+      ['contact_number', 'Contact number (telefon firmowy)'],
+      ['decision_maker_phone', 'Decision maker phone (telefon decydenta)'],
+      ['lead_email', 'Lead email (ogólny e-mail firmy)'],
+      ['source', 'Source (Ugly but Rich)'],
+      ['funnel_step', 'Funnel step (Leads)'],
+      ['lead_potential_score', 'Lead Potential Score'],
+      ['company_card_url', 'Karta firmy w Ugly but Rich'],
     ],
+    fieldSuggestions: null,
     rules: { rules: [], can_manage: false, conditions: {} },
     ruleForm: null,
     preview: {},
@@ -468,7 +478,24 @@ export function registerPipeline(Alpine) {
     },
     async loadFields() {
       if (!this.status?.destination?.list_id) return;
-      this.fields = await this.options('fields', this.status.destination.list_id);
+      this.picker.loading = 'fields';
+      this.picker.error = null;
+      try {
+        const res = await api('/clickup/options', { query: { level: 'fields', parent_id: this.status.destination.list_id } });
+        this.fields = res.items;
+        this.fieldSuggestions = { suggested: res.suggested || {}, missing: res.missing || [] };
+        // Propozycja mapowania po nazwach pól (tylko puste pozycje; zapis wymaga kliknięcia „Zapisz mapowanie”).
+        const saved = this.status.settings?.field_mapping || {};
+        for (const [key, fieldId] of Object.entries(this.fieldSuggestions.suggested)) {
+          if (!this.mapping[key] && !saved[key]) this.mapping[key] = fieldId;
+        }
+        for (const [key, m] of Object.entries(saved)) if (!this.mapping[key]) this.mapping[key] = m.field_id;
+      } catch (e) {
+        this.picker.error = e.message;
+        this.fields = [];
+      } finally {
+        this.picker.loading = '';
+      }
     },
     compatible(key) {
       const types = {
@@ -479,8 +506,21 @@ export function registerPipeline(Alpine) {
         contact_priority_score: ['number', 'short_text', 'text'],
         pipeline_status: ['short_text', 'text', 'drop_down'],
         priority: ['short_text', 'text', 'drop_down'],
-      }[key];
+        contact: ['short_text', 'text'],
+        contact_number: ['phone', 'short_text', 'text'],
+        decision_maker_phone: ['phone', 'short_text', 'text'],
+        lead_email: ['email', 'short_text', 'text'],
+        source: ['drop_down', 'short_text', 'text', 'labels'],
+        funnel_step: ['drop_down', 'short_text', 'text'],
+        lead_potential_score: ['number', 'short_text', 'text'],
+        company_card_url: ['url', 'short_text', 'text'],
+      }[key] || [];
       return (this.fields || []).filter((f) => types.includes(f.type));
+    },
+    async saveClaimSync(body) {
+      const r = await this.run(() => api('/clickup/claim-sync', { method: 'POST', body }), 'Zapisano ustawienie zadań po przejęciu.');
+      // Po błędzie odświeżenie widoku przywraca stan pól wyboru z serwera.
+      if (this.status) this.status = r ? { ...this.status, claim_sync: r } : { ...this.status };
     },
     async saveMapping() {
       const r = await this.run(() => api('/clickup/settings', { method: 'POST', body: { field_mapping: this.mapping } }), 'Zapisano mapowanie pól (tylko istniejące pola listy).');

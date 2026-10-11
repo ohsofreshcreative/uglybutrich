@@ -355,6 +355,45 @@ Szczegóły: ARCHITECTURE.md §20, `docs/QA-REPORT.md` §14. Migracja M013 (sche
 
 **LocalWP:** zob. `docs/QA-REPORT.md` §14.4.
 
+## Wyników na stronie — Discover i Prospects (11.10.2026)
+
+**Zrobione:**
+- Lista „Wyników na stronie:” (10 / 25 / 50 / 100, domyślnie 25) nad tabelą Discover, obok filtrów. W Prospects istniejący wybór „Na stronę” ujednolicony.
+- Paginacja po stronie serwera (`per_page`, maks. 100). Zmiana: jedno zapytanie listy, powrót na 1. stronę, filtry i sortowanie bez zmian, bez przeładowania strony.
+- Wybór zapamiętany w localStorage osobno dla każdej listy (`ubr_per_page_discover`, `ubr_per_page_prospects`). Wartość spoza listy daje 25.
+- Odpowiedź starszego żądania (np. odświeżenia w tle) nie nadpisuje nowszej listy.
+- Lekkie odświeżanie zmienionych wierszy (10.4) obejmuje do 100 widocznych wierszy.
+- Paginacja pokazuje zakres („1–25 z 120”).
+- Moduł `resources/js/ubr/per-page.js`.
+
+**Testy (kontener):**
+- JS `tests/js/per-page.test.mjs`: 31/31.
+- Playwright: 95/95 (10→25→50→100, paginacja, zapamiętywanie, filtry i sortowanie, aktualizacja statusu przy 100 wierszach, brak zbędnych zapytań, 1920–390 px).
+- Regresja: PHP 1222/1222, E2E 58/58 · 71/71 · 55/55 · 76/76.
+
+## Etap 10.4.3 — Discover Optimization + Website Age Intelligence + Claim-Based Decision Maker Finder + ClickUp Auto-Sync (11.10.2026)
+
+Szczegóły: ARCHITECTURE.md §21, `docs/QA-REPORT.md` §16. Migracja M014 (schemat v14). Wagi scoringów bez zmian.
+
+**Zrobione:**
+- Worker weryfikacji: kroki 8 s z łańcuchowaniem, blokada 60 s odnawiana, zwrot nieprzetworzonych pozycji (przyczyna przerw z diagnostyki 10.4.1).
+- Discover: ogólny e-mail firmy z weryfikacji, Opportunity Score w tle, Website Age w tle, decydent „Po przejęciu”; listy nie zlecają Lead Intelligence.
+- Website Age Intelligence: odcisk projektu, porównanie kopii Wayback, wykrywanie redesignu, pewność, status, dowody, cache, limity, ponowienia; sekcja w karcie firmy, etykieta na liście, filtr 5+/7+/10+/nieznany.
+- „Przejmij firmę”: Decision Maker Finder w tle (bez płatnych zapytań), statusy w karcie, „Ponów wyszukiwanie decydenta” z ochroną przed duplikatami, blokada dla zakazu kontaktu / BLOCKED.
+- ClickUp (domyślnie wyłączone — przełącznik właściciela w Settings → ClickUp): jedno zadanie po przejęciu i aktualizacja po znalezieniu decydenta, mapowanie pól (propozycja, bez tworzenia pól), ochrona ręcznych zmian z konfliktami, idempotencja, sprawdzenie wyniku po timeoucie, ograniczone ponowienia.
+
+**Testy (kontener, usługi zewnętrzne mockowane):** PHP 1337/1337 (nowe `tests/discover-claim-p1043.php`), JS 35/35 (nowe `claim.test.mjs`) + 18 + 31 + 5 + 19 + 35, Playwright 82/82 (nowe) + regresja 58/58 · 71/71 · 55/55 · 76/76 · 95/95.
+
+**Produkcja / LocalWP:** zob. `docs/QA-REPORT.md` §16.
+
+## Etap 10.5 — Sequences (11.10.2026)
+
+Szczegóły: ARCHITECTURE.md §22, `docs/QA-REPORT.md` §17. Migracja M015 (schemat v15). Wysyłka domyślnie wyłączona.
+
+**Zrobione:** biblioteka kampanii (wspólne / prywatne, dowolna liczba kroków, kolejność, duplikowanie, archiwizacja, podgląd), przypisanie do firmy jako niezależna kopia z indywidualną edycją, personalizacja ze zmiennymi i wartościami ręcznymi, skrzynki SMTP pracowników (szyfrowanie, test, DNS, limity, odłączanie), harmonogram z oknem wysyłki i strefą czasową, trwała kolejka i worker (blokady, identyfikatory operacji, wynik nieznany, bezpieczne ponowienia, limity), jedna aktywna sekwencja na odbiorcę, wykluczenia i rezygnacja (link + List-Unsubscribe), pauza / wznowienie / anulowanie, widoki Active / Scheduled / Sent / Mailboxes / Settings, tryb testowy, przygotowanie pod AI Outreach Assistant, status pipeline „Mailing”.
+
+**Testy (kontener):** PHP 1450/1450 (+113: `tests/sequences-p105.php`, w tym lokalny serwer SMTP), JS 34/34 (nowe) + 35 + 18 + 31 + 5 + 19 + 35, Playwright 79/79 (nowe) + regresja 82/82 · 58/58 · 71/71 · 55/55 · 76/76 · 95/95.
+
 ## Następny etap
 
 Przed wdrożeniem na Hostinger: unieważnienie klucza SSH i commit jego usunięcia (`docs/SECURITY-KEY.md`), sprawdzenie wymagań serwera i konfiguracji produkcyjnej (`docs/DEPLOYMENT.md`), decyzja o Website Analyzerze na Hostingerze (VPS / osobny renderer / tryb PARTIAL). Do decyzji: zmiany scoringu D12/D13 z raportu QA, retencja logów, ClickUp Live (lista kontrolna w QA-REPORT §10), Apollo People Search, klucze CEIDG/GUS.

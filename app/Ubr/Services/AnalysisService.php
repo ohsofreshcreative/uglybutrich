@@ -109,6 +109,58 @@ class AnalysisService
 		];
 	}
 
+	/** Prompt 10.4.3 — automatyczny Website Opportunity Score w Discover (UBR_AUTO_ANALYSIS, domyślnie włączony). */
+	public static function autoEnabled(): bool
+	{
+		return (bool) apply_filters('ubr/analysis/auto', ! defined('UBR_AUTO_ANALYSIS') || constant('UBR_AUTO_ANALYSIS'));
+	}
+
+	/** Dzienny limit analiz automatycznych na organizację (UBR_AUTO_ANALYSIS_PER_DAY, domyślnie 300). */
+	public static function autoDailyLimit(): int
+	{
+		return max(0, (int) apply_filters('ubr/analysis/auto_per_day', defined('UBR_AUTO_ANALYSIS_PER_DAY') ? (int) constant('UBR_AUTO_ANALYSIS_PER_DAY') : 300));
+	}
+
+	/**
+	 * Prompt 10.4.3 — Discover: analiza strony (Website Opportunity Score) zlecana w tle po weryfikacji firmy.
+	 * Bez decydentów i bez Apollo; strony zwykle z pamięci podręcznej po weryfikacji. Pomija firmy nieaktywne, z niedostępną
+	 * stroną lub domeną innego podmiotu, z trwającą lub aktualną analizą. Nie zużywa limitów analiz ręcznych (osobny limit).
+	 * Analizy ręczne mają pierwszeństwo w kolejce.
+	 */
+	public function queueAuto(int $companyId, int $organizationId): bool
+	{
+		if (! self::autoEnabled() || $organizationId <= 0) {
+			return false;
+		}
+
+		$company = $this->companies->find($companyId);
+
+		if (! $company
+			|| in_array((string) ($company['verification_status'] ?? ''), ['inactive', 'suspended'], true)
+			|| in_array((string) ($company['website_status'] ?? ''), ['unreachable', 'http_error'], true)
+			|| $this->skipReason($company, false)
+		) {
+			return false;
+		}
+
+		if ($this->analyses->countAutoForOrganizationSince($organizationId, gmdate('Y-m-d 00:00:00')) >= self::autoDailyLimit()) {
+			return false;
+		}
+
+		$this->analyses->create([
+			'company_id' => $companyId,
+			'organization_id' => $organizationId,
+			'user_id' => null,
+			'trigger_type' => 'auto',
+			'url' => mb_substr((string) $company['website_url'], 0, 500),
+			'algorithm_version' => WebsiteAnalyzerService::ALGORITHM_VERSION,
+		]);
+		$this->companies->update($companyId, ['analysis_status' => 'queued']);
+		$this->runner->kick();
+
+		return true;
+	}
+
 	/**
 	 * @param array<string, mixed> $company
 	 * @return array{code: string, message: string}|null

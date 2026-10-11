@@ -228,6 +228,7 @@ class ClickUpOAuthService
 			'authorized_teams' => $c['authorized_teams'] ?? [],
 			'destination' => $c['destination'] ?? null,
 			'settings' => ($c['settings'] ?? []) + ['task_name_template' => '{company} — Website Redesign Opportunity', 'field_mapping' => []],
+			'claim_sync' => app(ClickUpExportService::class)->claimSyncStatus($ctx),
 			'revocation_note' => 'ClickUp nie udostępnia w API endpointu unieważniania tokenu — rozłączenie usuwa token z Ugly but Rich; dostęp aplikacji możesz dodatkowo odebrać w ustawieniach ClickUp (Settings → Apps).',
 		];
 	}
@@ -281,6 +282,8 @@ class ClickUpOAuthService
 			}
 		}
 
+		// Prompt 10.4.3 — zaplanowane operacje tego połączenia (np. ustalenie wyniku eksportu) nie mogą już działać.
+		$this->repo->cancelQueuedJobs((int) $c['id'], 'Połączenie ClickUp zostało rozłączone.');
 		$this->repo->deleteConnection($ctx->organizationId, $ctx->userId);
 	}
 

@@ -357,6 +357,13 @@ class DiscoveryRunner
 			$this->events->log($searchId, 'warning', 'Nie udało się zlecić weryfikacji: ' . $e->getMessage());
 		}
 
+		// Prompt 10.4.3 — Lead Intelligence dla nowych wyników liczone w tle (wcześniej przy wyświetlaniu listy).
+		try {
+			app(LeadIntelligenceRunner::class)->kick();
+		} catch (Throwable) {
+			// ocena nigdy nie psuje wyszukiwania
+		}
+
 		$this->finish($searchId, $final, $error, $state);
 
 		if ($state['verification_queued']) {

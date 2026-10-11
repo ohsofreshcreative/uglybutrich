@@ -2,7 +2,7 @@
 <div x-show="$store.ubr.drawer.open" x-cloak class="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Szczegóły firmy">
 	<div class="absolute inset-0 bg-ink/30" @click="$store.ubr.closeDrawer()" x-show="$store.ubr.drawer.open" x-transition.opacity></div>
 
-	<section class="absolute inset-y-0 right-0 w-full bg-white shadow-[var(--shadow-pop)] flex flex-col transition-[max-width] duration-200" :class="['analysis', 'contacts', 'sales', 'lead'].includes($store.ubr.drawer.tab) ? 'max-w-[860px]' : 'max-w-[560px]'"
+	<section class="absolute inset-y-0 right-0 w-full bg-white shadow-[var(--shadow-pop)] flex flex-col transition-[max-width] duration-200" :class="['analysis', 'contacts', 'sales', 'lead', 'mailing'].includes($store.ubr.drawer.tab) ? 'max-w-[860px]' : 'max-w-[560px]'"
 		x-show="$store.ubr.drawer.open"
 		x-transition:enter="transition duration-200 ease-out" x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
 		x-transition:leave="transition duration-150 ease-in" x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full">
@@ -28,7 +28,7 @@
 		</header>
 
 		<nav class="flex gap-1 px-6 border-b border-line overflow-x-auto" role="tablist" aria-label="Sekcje karty firmy" x-show="!$store.ubr.drawer.loading && $store.ubr.drawer.company">
-			<template x-for="t in [{k: 'company', l: 'Firma'}, {k: 'lead', l: 'Lead Intelligence'}, {k: 'sales', l: 'Sprzedaż'}, {k: 'contacts', l: 'Decision Makers'}, {k: 'analysis', l: 'Website Analysis'}]" :key="t.k">
+			<template x-for="t in [{k: 'company', l: 'Firma'}, {k: 'lead', l: 'Lead Intelligence'}, {k: 'sales', l: 'Sprzedaż'}, {k: 'contacts', l: 'Decision Makers'}, {k: 'analysis', l: 'Website Analysis'}, {k: 'mailing', l: 'Mailing'}]" :key="t.k">
 				<button type="button" role="tab" class="px-3 h-10 -mb-px border-b-2 text-[13px] font-semibold whitespace-nowrap shrink-0" :aria-selected="$store.ubr.drawer.tab === t.k"
 					:class="$store.ubr.drawer.tab === t.k ? 'border-ink text-ink' : 'border-transparent text-ink-muted hover:text-ink'" @click="$store.ubr.setTab(t.k)" x-text="t.l"></button>
 			</template>
@@ -53,6 +53,10 @@
 
 			<template x-if="!$store.ubr.drawer.loading && $store.ubr.drawer.company && $store.ubr.drawer.tab === 'contacts'">
 				@include('ubr.partials.decision-makers-tab')
+			</template>
+
+			<template x-if="!$store.ubr.drawer.loading && $store.ubr.drawer.company && $store.ubr.drawer.tab === 'mailing'">
+				@include('ubr.partials.mailing-tab')
 			</template>
 
 			<template x-if="!$store.ubr.drawer.loading && $store.ubr.drawer.company && $store.ubr.drawer.tab === 'analysis'">
@@ -91,6 +95,15 @@
 					</div>
 
 					@include('ubr.partials.call.company-phones')
+
+					{{-- Prompt 10.4.3: e-mail firmowy, przejęta firma (decydent + ClickUp), wiek strony --}}
+					<div class="text-[13px]" x-show="c.general_email" data-general-email>
+						<span class="text-ink-muted text-[12px]">E-mail firmowy:</span>
+						<a class="underline" :href="'mailto:' + c.general_email" x-text="c.general_email"></a>
+						<button type="button" class="ubr-btn-ghost ubr-btn-sm !px-2 ml-1" @click="$store.ubr.copyText(c.general_email, 'e-mail')">Kopiuj</button>
+					</div>
+					@include('ubr.partials.claim-panel')
+					@include('ubr.partials.site-age-section')
 
 					{{-- Dane podstawowe --}}
 					<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-[13px]">
