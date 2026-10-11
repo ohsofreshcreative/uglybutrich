@@ -20,7 +20,7 @@ final class FitFlags
 		'directory' => 'Katalog / agregator, nie firma',
 		'inactive' => 'Nieaktywna w rejestrze',
 		'suspended' => 'Działalność zawieszona',
-		'large_enterprise' => 'Duże przedsiębiorstwo (1000+ os.)',
+		'large_enterprise' => 'Duże przedsiębiorstwo (1000+ os. lub przychód ≥ 250 mln wg źródła)',
 		'group_member' => 'Możliwy oddział / spółka grupy',
 		'no_website' => 'Brak strony WWW',
 	];

@@ -69,6 +69,12 @@ final class QueueCatalog
 			'definition' => 'Lead Potential ≥ 70 (wymaga pomiarów strony — bez nich limit to 65), bez hard blockers, poza statusami zamkniętymi.',
 			'scope' => 'pool',
 		],
+		'ready_to_call' => [
+			'label' => 'Ready to Call',
+			'label_pl' => 'Gotowe do telefonu',
+			'definition' => 'Cold Call Readiness „Telefon do decydenta” albo „Zadzwoń do firmy” (jest numer), poza statusami zamkniętymi; bez zakazu kontaktu i hard blockers (BLOCKED ma pierwszeństwo) oraz bez firm, którymi opiekuje się inny pracownik. Odrębne od Lead Potential.',
+			'scope' => 'pool',
+		],
 		'blocked' => [
 			'label' => 'Blocked',
 			'label_pl' => 'Wykluczone (hard blockers)',
@@ -128,6 +134,7 @@ final class QueueCatalog
 			'find_decision_maker' => "(x.action_type = '" . ActionPriorityEngine::FIND_DECISION_MAKER . "' OR (x.prospect_id IS NOT NULL AND x.prospect_status IN (" . $in(ActionPriorityEngine::PRE_CONTACT_STATUSES) . ") AND x.has_blocker = 0 AND x.contacts_status IS NULL AND x.recommendation NOT IN ('low_priority', 'do_not_contact')))",
 			'missing_analysis' => "COALESCE(x.domain, '') <> '' AND NOT ({$analyzed}) AND x.has_blocker = 0 AND {$open}",
 			'high_potential' => 'x.lead_score >= ' . ActionPriorityEngine::HIGH_POTENTIAL . " AND x.has_blocker = 0 AND {$open}",
+			'ready_to_call' => "x.call_readiness IN ('READY_DIRECT', 'CALL_COMPANY') AND {$open} AND (x.owner_user_id IS NULL OR x.owner_user_id = x.viewer_id)",
 			'blocked' => 'x.has_blocker = 1',
 			default => '1 = 0',
 		};

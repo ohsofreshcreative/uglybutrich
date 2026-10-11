@@ -166,6 +166,16 @@
 								</template>
 							</div>
 						</template>
+						{{-- Prompt 10.2: „Gotowe do telefonu” — bezpośrednio do decydenta (potwierdzony numer) / przez centralę firmy. --}}
+						<template x-if="queue.key === 'ready_to_call'">
+							<div class="flex flex-wrap gap-1.5 w-full" role="group" aria-label="Rodzaj kontaktu telefonicznego">
+								<template x-for="b in [{ k: '', l: 'Wszystkie' }, { k: 'direct', l: 'Bezpośrednio do decydenta' }, { k: 'company', l: 'Przez centralę firmy' }]" :key="b.k">
+									<button type="button" class="h-8 px-3 rounded-lg border text-[12px] font-semibold inline-flex items-center gap-1.5" :class="queue.filters.call_kind === b.k ? 'bg-ink text-white border-ink' : 'bg-white border-line'" :aria-pressed="queue.filters.call_kind === b.k" @click="queue.filters.call_kind = b.k; loadQueue(1)">
+										<span x-text="b.l"></span><span class="tabular-nums" x-show="b.k && queue.breakdown" x-text="queue.breakdown ? '(' + (queue.breakdown[b.k] ?? 0) + ')' : ''"></span>
+									</button>
+								</template>
+							</div>
+						</template>
 						<template x-if="!isFollowupQueue">
 							<div class="flex flex-wrap items-end gap-2 w-full">
 								<label class="text-[11px] font-bold uppercase tracking-wider text-ink-muted">Zakres
@@ -270,6 +280,7 @@
 											<template x-if="it.issues?.length"><p class="text-[11px] text-ink-muted mt-0.5 line-clamp-1" :title="it.issues.join(' · ')" x-text="'Także: ' + it.issues.join(' · ')"></p></template>
 										</td>
 										<td class="text-[12px] min-w-0">
+											@include('ubr.partials.ac-call-phone')
 											<template x-if="queue.key === 'ready_to_contact' || it.contact">
 												<div class="mb-1 min-w-0">
 													<div class="font-semibold truncate" x-text="it.contact ? it.contact.name : 'Brak wskazanej osoby'"></div>
@@ -313,6 +324,7 @@
 									<p class="text-[12px] text-ink-muted" x-text="it.reason"></p>
 									<template x-if="it.manual_review?.sentence"><p class="text-[12px] font-semibold" x-text="it.manual_review.sentence"></p></template>
 									<template x-if="it.contact"><p class="text-[12px]" x-text="'Kontakt: ' + it.contact.name + (it.contact.title ? ', ' + it.contact.title : '')"></p></template>
+									<div class="text-[12px]">@include('ubr.partials.ac-call-phone')</div>
 									<div class="flex flex-wrap items-center justify-between gap-2">
 										<span class="text-[12px] text-ink-muted" x-text="(it.prospect ? 'Zapisana · ' + it.prospect.status_label : 'Niezapisana') + ' · analiza: ' + statusLabel(it.analysis_status)"></span>
 										<template x-if="it.cta"><button type="button" class="ubr-btn-ghost ubr-btn-sm" :disabled="ctaDisabled(it)" @click="runCta(it)" x-text="ctaLabel(it)"></button></template>

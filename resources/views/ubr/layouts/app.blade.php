@@ -97,6 +97,7 @@
 
 	@include('ubr.partials.company-drawer')
 	@include('ubr.partials.preview-modal')
+	@include('ubr.partials.call.modals')
 	@include('ubr.partials.toasts')
 </body>
 

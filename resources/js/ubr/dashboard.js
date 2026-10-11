@@ -75,7 +75,7 @@ export function registerDashboard(Alpine) {
     owner: 'all',
     data: null,
     priorities: { items: [], total: 0, page: 1, per_page: 10, loading: false },
-    queue: { key: null, items: [], total: 0, page: 1, per_page: 20, loading: false, error: null, bucket: '', filters: { scope: 'all', min_lead: '', confidence: '', search: '', sort: 'rank', industry: '', region: '', redesign: '', recommendation: '', manual_review: '' } },
+    queue: { key: null, items: [], total: 0, page: 1, per_page: 20, loading: false, error: null, bucket: '', breakdown: null, filters: { scope: 'all', min_lead: '', confidence: '', search: '', sort: 'rank', industry: '', region: '', redesign: '', recommendation: '', manual_review: '', call_kind: '' } },
     primaryQueues: ['top_opportunities', 'needs_attention', 'ready_to_contact', 'followups'],
     busy: {},
     _refreshTimer: null,
@@ -154,21 +154,22 @@ export function registerDashboard(Alpine) {
     openKpi(k) {
       if (k.link === 'prospects') { window.location.href = window.UBR.urls.prospects; return; }
       // Drill-down KPI zawsze bez filtrów listy — inaczej suma listy różni się od liczby na kafelku.
-      Object.assign(this.queue.filters, { scope: 'all', min_lead: '', confidence: '', search: '', industry: '', region: '', redesign: '', recommendation: '', manual_review: '' });
+      Object.assign(this.queue.filters, { scope: 'all', min_lead: '', confidence: '', search: '', industry: '', region: '', redesign: '', recommendation: '', manual_review: '', call_kind: '' });
       this.openQueue(k.queue, k.bucket || '');
     },
     get filtersActive() {
       const f = this.queue.filters;
-      return !!(f.min_lead || f.confidence || f.search || f.industry || f.region || f.redesign || f.recommendation || f.manual_review || f.scope !== 'all');
+      return !!(f.min_lead || f.confidence || f.search || f.industry || f.region || f.redesign || f.recommendation || f.manual_review || f.call_kind || f.scope !== 'all');
     },
     resetFilters() {
-      Object.assign(this.queue.filters, { scope: 'all', min_lead: '', confidence: '', search: '', industry: '', region: '', redesign: '', recommendation: '', manual_review: '' });
+      Object.assign(this.queue.filters, { scope: 'all', min_lead: '', confidence: '', search: '', industry: '', region: '', redesign: '', recommendation: '', manual_review: '', call_kind: '' });
       this.loadQueue(1);
     },
     openQueue(key, bucket = '', scroll = true) {
       if (!key) return;
       if (this.queue.key !== key) {
-        Object.assign(this.queue, { items: [], total: 0, page: 1 }); // inny kształt pozycji (follow-up vs firma)
+        Object.assign(this.queue, { items: [], total: 0, page: 1, breakdown: null }); // inny kształt pozycji (follow-up vs firma)
+        this.queue.filters.call_kind = '';
         this.queue.filters.sort = key === 'top_opportunities' ? 'rank' : 'priority'; // Top Opportunities = Smart Ranking
       }
       this.queue.key = key;
@@ -187,10 +188,10 @@ export function registerDashboard(Alpine) {
       if (!silent) this.queue.loading = true;
       this.queue.error = null;
       const f = this.queue.filters;
-      const query = { owner: this.owner, page, per_page: this.queue.per_page, sort: f.sort, scope: f.scope, min_lead: f.min_lead, confidence: f.confidence, search: f.search, industry: f.industry, region: f.region, redesign: f.redesign, recommendation: f.recommendation, manual_review: f.manual_review, bucket: this.queue.bucket };
+      const query = { owner: this.owner, page, per_page: this.queue.per_page, sort: f.sort, scope: f.scope, min_lead: f.min_lead, confidence: f.confidence, search: f.search, industry: f.industry, region: f.region, redesign: f.redesign, recommendation: f.recommendation, manual_review: f.manual_review, call_kind: this.queue.key === 'ready_to_call' ? f.call_kind : '', bucket: this.queue.bucket };
       try {
         const res = await api(`/action-center/queues/${this.queue.key}`, { query });
-        Object.assign(this.queue, { items: res.items.map(normalize), total: res.total, page: res.page, per_page: res.per_page });
+        Object.assign(this.queue, { items: res.items.map(normalize), total: res.total, page: res.page, per_page: res.per_page, breakdown: res.breakdown || null });
       } catch (e) {
         this.queue.error = e.message;
       } finally {

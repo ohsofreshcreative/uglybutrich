@@ -48,8 +48,58 @@
 			<span x-show="!ct.email" class="text-ink-muted" x-text="ct.email_note"></span>
 			<div x-show="ct.role_email" class="text-[11px] text-ink-muted" x-text="ct.role_email ? ct.role_email.label + ': ' + ct.role_email.value : ''"></div>
 		</dd>
-		<template x-if="ct.phone"><dt class="text-ink-muted">Telefon</dt></template>
-		<template x-if="ct.phone"><dd><a :href="'tel:' + ct.phone" class="hover:underline" x-text="ct.phone"></a> <span class="text-[11px] text-ink-muted">(służbowy, z oficjalnej strony)</span></dd></template>
+		{{-- Prompt 10.2: bezpośredni telefon z dowodem powiązania (potwierdzony / prawdopodobny / do weryfikacji / odrzucony),
+			źródłem, datami i decyzjami organizacji. Numer firmy nie jest numerem osoby, dopóki nie zostanie świadomie przypisany. --}}
+		<dt class="text-ink-muted">Telefon decydenta</dt>
+		<dd class="min-w-0">
+			<template x-if="!(ct.phone_links || []).length"><span class="text-ink-muted">Brak numeru decydenta</span></template>
+			<template x-for="l in (ct.phone_links || [])" :key="l.id">
+				<div class="mb-2 last:mb-0 min-w-0" :data-phone-link="l.status">
+					<div class="flex flex-wrap items-center gap-1.5">
+						<template x-if="l.direct && $store.ubr.safeTel(l.tel)">
+							<a :href="$store.ubr.safeTel(l.tel)" class="font-bold tabular-nums hover:underline" :class="l.status === 'VERIFIED' ? 'text-money' : 'text-gold-deep'" x-text="l.number" :aria-label="'Zadzwoń do ' + ct.full_name + ': ' + l.number"></a>
+						</template>
+						<template x-if="!l.direct"><span class="font-bold tabular-nums text-ink-muted" :class="l.status === 'REJECTED' ? 'line-through' : ''" x-text="l.number"></span></template>
+						<button type="button" x-show="l.direct" class="grid place-items-center size-8 rounded-md text-ink-muted hover:text-ink hover:bg-canvas" @click="$store.ubr.copyPhone(l)" :aria-label="'Kopiuj numer ' + l.number">@include('ubr.partials.icon', ['name' => 'copy', 'class' => 'size-3.5'])</button>
+						<span :class="{ VERIFIED: 'ubr-badge-confirmed', LIKELY: 'ubr-badge-declared', UNCERTAIN: 'ubr-badge-uncertain', REJECTED: 'ubr-badge-danger' }[l.status]" x-text="l.status_label"></span>
+						<span class="text-[11px] text-ink-muted" x-text="l.source_label + (l.origin_label && l.origin_label !== l.source_label ? ' (dowód: ' + l.origin_label.toLowerCase() + ')' : '')"></span>
+					</div>
+					<div class="text-[11px] text-ink-soft" x-text="l.evidence_label"></div>
+					<div class="text-[11px] text-ink-muted line-clamp-2 [overflow-wrap:anywhere]" x-show="l.excerpt" :title="l.excerpt" x-text="'„' + l.excerpt + '”'"></div>
+					<div class="text-[11px] text-ink-muted">
+						<span x-text="'Pozyskano: ' + $store.ubr.date(l.found_at) + ' · Weryfikacja: ' + (l.verified_at ? $store.ubr.date(l.verified_at) : '—')"></span>
+						<a x-show="l.source_url" :href="$store.ubr.safeHref(l.source_url)" target="_blank" rel="noopener nofollow" class="ml-1 underline">źródło</a>
+					</div>
+					<div class="flex flex-wrap gap-1.5 mt-1" x-show="d.can_manage">
+						<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="l.can_confirm && l.status !== 'REJECTED'" @click="$store.ubr.phoneLink(ct, { action: 'confirm', e164: l.e164 })">Potwierdź</button>
+						<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="l.can_reject" @click="$store.ubr.phoneLink(ct, { action: 'reject', e164: l.e164 })">Odrzuć</button>
+						<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="l.can_remove && l.status !== 'REJECTED'" @click="$store.ubr.removePhoneLink(ct, l)" title="Numer firmy pozostaje w karcie „Telefony firmy”">Usuń powiązanie</button>
+						<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="l.status === 'REJECTED' && l.decided_by_organization" @click="$store.ubr.removePhoneLink(ct, l)">Cofnij odrzucenie</button>
+					</div>
+				</div>
+			</template>
+			<template x-if="d.can_manage && (d.company_numbers || []).length">
+				<div class="flex flex-wrap items-center gap-1.5 mt-2">
+					<select class="ubr-input h-8 text-[12px] w-auto max-w-full" x-model="assign[ct.id]" :aria-label="'Numer firmy do przypisania: ' + ct.full_name">
+						<option value="">Przypisz istniejący numer firmy…</option>
+						<template x-for="n in d.company_numbers" :key="n.id"><option :value="n.id" x-text="n.number + ' · ' + (n.owner_note || n.owner_label || n.type_label)"></option></template>
+					</select>
+					<button type="button" class="ubr-btn-ghost ubr-btn-sm" :disabled="!assign[ct.id]" @click="$store.ubr.phoneLink(ct, { action: 'assign', company_phone_id: Number(assign[ct.id]) }); assign[ct.id] = ''">Przypisz</button>
+				</div>
+			</template>
+		</dd>
+		{{-- Prompt 10.3: zatwierdzone dopasowanie Apollo (prywatne dla organizacji). Sygnał dostępności ≠ numer. --}}
+		<template x-if="($store.ubr.drawer.apollo?.candidates || []).some(c => c.approved && c.approved.contact_id === ct.id)">
+			<dt class="text-ink-muted">Apollo</dt>
+		</template>
+		<template x-for="ac in ($store.ubr.drawer.apollo?.candidates || []).filter(c => c.approved && c.approved.contact_id === ct.id).slice(0, 1)" :key="'ap' + ac.id">
+			<dd class="min-w-0" data-apollo-contact>
+				<span class="ubr-badge-confirmed">Dopasowanie zatwierdzone</span>
+				<span class="text-[11px] text-ink-muted" x-text="ac.approved.level_label"></span>
+				<div class="text-[11px] text-ink-soft" x-text="ac.phone_availability_label"></div>
+				<div class="text-[11px] text-ink-muted" x-text="'Sprawdzono w Apollo: ' + $store.ubr.date(ac.last_seen_at)"></div>
+			</dd>
+		</template>
 		<template x-if="ct.profile_url"><dt class="text-ink-muted">Profil</dt></template>
 		<template x-if="ct.profile_url"><dd><a :href="$store.ubr.safeHref(ct.profile_url)" target="_blank" rel="noopener nofollow" class="hover:underline">Profil zawodowy</a> <span class="text-[11px] text-ink-muted">(link opublikowany przez źródło)</span></dd></template>
 		<dt class="text-ink-muted">Weryfikacja</dt>

@@ -109,6 +109,14 @@ class WebsiteAnalyzerService
 			}
 		}
 
+		// Telefony firmy z już pobranego HTML (strona główna + Kontakt) — bez dodatkowych zapytań; domena innego podmiotu pomijana.
+		if ($homeDoc && ($company['domain_status'] ?? '') !== 'mismatch') {
+			app(CompanyPhoneService::class)->fromDocuments((int) $analysis['company_id'], array_values(array_filter([
+				['html' => $homeDoc->html, 'url' => $homeDoc->url, 'kind' => 'home'],
+				$contactDoc ? ['html' => $contactDoc->html, 'url' => $contactDoc->url, 'kind' => 'contact'] : null,
+			])));
+		}
+
 		// http → https.
 		$httpsRedirect = null;
 

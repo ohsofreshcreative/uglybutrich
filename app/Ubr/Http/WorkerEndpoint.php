@@ -103,6 +103,8 @@ class WorkerEndpoint
 				app(\App\Ubr\Services\ClickUpRunner::class)->tick();
 			} elseif ($job === 'lead') {
 				app(\App\Ubr\Services\LeadIntelligenceRunner::class)->tick();
+			} elseif ($job === 'phones') {
+				app(\App\Ubr\Services\ApolloPhoneRunner::class)->tick();
 			}
 		} catch (\Throwable $e) {
 			error_log('[ubr] Job worker "' . $job . '" failed: ' . $e->getMessage());

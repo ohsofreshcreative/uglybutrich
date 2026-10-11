@@ -300,6 +300,49 @@ Szczegóły: `docs/QA-REPORT.md`, ARCHITECTURE.md §16, wdrożenie: `docs/DEPLOY
 
 **Rekomendacja:** READY WITH CONDITIONS — warunki w `docs/QA-REPORT.md` §8.
 
+## Etap 10 — Decision Maker Finder 2.0 + Phone Intelligence + Cold Calling Workspace (10.10.2026)
+
+Szczegóły: ARCHITECTURE.md §17, `docs/QA-REPORT.md` §11, wdrożenie: `docs/DEPLOYMENT.md`. Migracja M010 (schemat v10, tylko nowe tabele / kolumny / indeksy). Scoringi bez zmian.
+
+**Zrobione:**
+- telefony firm ze strony (linki `tel:`, Schema.org, treść po „tel.”), normalizacja E.164, odrzucanie NIP / REGON / KRS / kodów pocztowych / rachunków / kodów produktów, deduplikacja, typy (centrala, oddział, sprzedaż, serwis), numer główny (centrala > Kontakt > stopka), ręczne numery organizacji (nigdy nie nadpisywane), ręczne odświeżenie ze strony — bez ponownej analizy i bez crawla;
+- Apollo People Search: stanowiska EN + PL, powiązanie osoby z firmą tylko przez domenę / ID organizacji Apollo, zapisany identyfikator osoby;
+- „Odblokuj telefon” (Apollo, płatne): wyłączone domyślnie, owner / admin, okno z nieznanym kosztem + osobne potwierdzenie, idempotencja i ochrona przed podwójnym kliknięciem, odbiór wyniku w tle (`poll_only`), limit dzienny, bez e-maili, bez automatycznego ponawiania; bezpieczny test `wp ubr apollo-phone-test` (domyślnie bez zapytania);
+- Cold Call Readiness (READY_DIRECT / CALL_COMPANY / FIND_PHONE / RESEARCH / BLOCKED), wielkość firmy w pasmach z „Brak danych”;
+- Company Ownership: „Przejmij firmę” (atomowo w bazie, wyścig → 409), przekazanie tylko z uprawnieniem, zakaz kontaktu, ostatni kontakt i wynik rozmowy w istniejącej historii aktywności;
+- Discover i Prospects: nowe kolumny (Firma, Wielkość, Strona WWW z „Podgląd”, Ocena, Decydent, Telefony, Opiekun / CRM, Status kontaktu, Akcje), wspólne komponenty, karty < 1280 px, filtry na całym zbiorze i nowe sortowania, widok „Wolne firmy z telefonem”, szybkie akcje (tel:, kopiuj, przejmij, wynik rozmowy) — Prospects bez poziomego przewijania;
+- Action Center: kolejka „Gotowe do telefonu”, DNC i firmy innych opiekunów poza moimi priorytetami; KPI bez zmian.
+
+**Testy (kontener):** PHP 986/986 (+150 w `tests/calling-p10.php`); JS 18/18 (nowy `calling.test.mjs`) + 19/19 + 35/35 + 5/5; Playwright 71/71 (5 szerokości × Discover / Prospects, Podgląd, kopiowanie, tel: bez zapisu, przejęcie, wynik rozmowy z klawiaturą, filtr, sortowanie, „Odblokuj telefon” na mocku, telefony w karcie firmy, zakaz kontaktu). Test obciążeniowy 10 000 firm: listy 33–112 ms, filtry telefonów 165–220 ms, Action Center bez cache ~390 ms.
+
+**LocalWP (11.10.2026):** zainstalowane za zgodą właściciela, kopia bazy przed migracją, M010 → v10 (po poprawce słowa zastrzeżonego `manual` w MySQL 8.4 — ok. 4 min błędów 500 po pierwszej próbie). Testy na żywo tylko do odczytu: listy, filtry, KPI bez zmian, podgląd, 5 ekranów × 5 szerokości, strona główna 200 — szczegóły w `docs/QA-REPORT.md` §11. W danych LocalWP brak numerów i danych o zatrudnieniu; numerów nie da się odzyskać z zapisanych analiz — `wp ubr phones-backfill` (próbnie / `--execute`) czeka na zgodę.
+
+**Company Phone Backfill na LocalWP (11.10.2026, za zgodą):** istniejące odświeżanie numerów ze strony (bez Website Analyzera, bez wyszukiwania firm, bez Apollo) dla 50 firm z domeną, po pilocie na 5 firmach. Wynik: 39/50 firm z numerem (78%), 230 numerów (200 krajowych), 0 duplikatów, 0 bez źródła; 20 numerów głównych do ręcznej weryfikacji. Poprawki z danych rzeczywistych: klasyfikacja z etykiety (osoby, działy, centrala), spółki z grupy, `tel:` ≠ tekst, robots.txt, `<base href>`, dodatkowa podstrona (lista krajów), numery zagraniczne, „Infolinia” pod oddziałami, numer w kolejce „Gotowe do telefonu”. Testy: PHP 1012/1012. Szczegóły: `docs/QA-REPORT.md` §11.
+
+**NOT VERIFIED:** zapytania do prawdziwego Apollo (People Search i Phone Enrichment); LOCKED w statusie telefonu nie jest używany (API nie potwierdza go bez zapytania).
+
+## Etap 10.2 — Direct Decision Maker Phones (11.10.2026)
+
+Szczegóły: ARCHITECTURE.md §18, `docs/QA-REPORT.md` §12. Migracja M011 (schemat v11). Scoringi bez zmian (telefon nie jest danymi wejściowymi).
+
+**Zrobione:** dowód powiązania numer ↔ osoba (`PersonPhoneExtractor`: VERIFIED / LIKELY / UNCERTAIN / REJECTED), właściciel numerów firmy (osoba / dział / ogólny / oddział / nieustalony), wyszukiwanie telefonów decydentów ze stron źródłowych numerów + podstron zarząd / zespół (bez Apollo, limity, robots.txt), dopasowanie do kontaktów po firmie + imieniu i nazwisku, nowi decydenci przez ścieżkę Decision Maker Findera, strażnik literówek, decyzje organizacji (potwierdź / odrzuć / przypisz / usuń — prywatne, nienadpisywane), READY_DIRECT tylko z potwierdzonym numerem, filtry (potwierdzony / do weryfikacji / tylko firma / brak / źródło / stanowisko), listy i karta firmy z wiarygodnością i źródłem, Dashboard: „bezpośrednio do decydenta” / „przez centralę”, kontrolowany test Apollo People Search.
+
+**Testy:** PHP 1082/1082, JS 18/18 + 19/19 + 35/35 + 5/5, Playwright 55/55 (nowe) + 71/71 (regresja P10) w kontenerze.
+
+**LocalWP:** kopia bazy, M011 → v11, analiza 71 z 73 numerów „dział / osoba” (40 to numery osób), 7 nowych decydentów ze źródłem, 0 potwierdzonych numerów decydentów (1 prawdopodobny — SECO/WARWICK, do potwierdzenia), People Search działa (nazwiska zamaskowane), Phone Enrichment wyłączony.
+
+## Etap 10.3 — Apollo Contact Matching & Phone Unlock (11.10.2026)
+
+Szczegóły: ARCHITECTURE.md §19, `docs/QA-REPORT.md` §13. Migracja M012 (schemat v12). Scoringi i gotowość bez zmian.
+
+**Zrobione:** audyt możliwości Apollo (dokumentacja + rzeczywisty test People Search z 10.2), kandydaci z People API Search przy firmie (bez e-maili i numerów, bez duplikatów), dopasowanie do kontaktów EXACT / STRONG / POSSIBLE / NO_MATCH / CONFLICT (maska nazwiska nigdy nie daje EXACT, bez zgadywania), identyfikator Apollo kontaktu = zatwierdzone dopasowanie organizacji (historia, zatwierdzający, daty, konflikty 409), „Szukaj decydentów w Apollo” w karcie firmy (zgoda, cache, 24 h na firmę, limit dzienny, blokada równoległa), widok kandydatów z akcjami (zatwierdź / odrzuć / odłącz / sprawdź ponownie / połącz / szczegóły / sprawdź odblokowanie), dostępność telefonu z sygnału Apollo (AVAILABLE / UNKNOWN / UNAVAILABLE; LOCKED nieużywany), Phone Unlock na zatwierdzonym identyfikatorze z blokadą po stronie serwera (preflight + `request()`), powody „Nie kontaktować” i „numer już potwierdzony”, koszt „wymaga potwierdzenia” (stawki tylko z dokumentacji), Discover / Prospects: sygnał Apollo i „Sprawdź Apollo” bez zapytań przy renderowaniu, retencja kandydatów.
+
+**Testy:** PHP 1174/1174, JS 18/18 + 5/5 + 19/19 + 35/35, Playwright 76/76 (nowe) + 55/55 (P10.2) + 71/71 (P10) w kontenerze — Apollo wyłącznie na mockach.
+
+**LocalWP:** zob. `docs/QA-REPORT.md` §13 (walidacja na danych rzeczywistych).
+
+**NOT VERIFIED:** rzeczywiste People Enrichment / Phone Enrichment (płatne — zablokowane), koszt na koncie, znaczenie pola `has_direct_phone` (nieudokumentowane).
+
 ## Następny etap
 
 Przed wdrożeniem na Hostinger: unieważnienie klucza SSH i commit jego usunięcia (`docs/SECURITY-KEY.md`), sprawdzenie wymagań serwera i konfiguracji produkcyjnej (`docs/DEPLOYMENT.md`), decyzja o Website Analyzerze na Hostingerze (VPS / osobny renderer / tryb PARTIAL). Do decyzji: zmiany scoringu D12/D13 z raportu QA, retencja logów, ClickUp Live (lista kontrolna w QA-REPORT §10), Apollo People Search, klucze CEIDG/GUS.

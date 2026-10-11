@@ -2,7 +2,7 @@
 	Zakładka „Decision Makers” w profilu firmy (GET /companies/{id}/contacts). Odczyt NIE uruchamia wyszukiwania.
 	Top 1–3 + pozostali kandydaci + ukryci (nieaktualni / odrzuceni) + skład zarządu z KRS + historia.
 --}}
-<div class="space-y-6" x-data="{ get d() { return $store.ubr.drawer.contacts }, noteFor: null, noteText: '', addOpen: false, form: { full_name: '', job_title: '', source_url: '', email: '' } }">
+<div class="space-y-6" x-data="{ get d() { return $store.ubr.drawer.contacts }, assign: {}, noteFor: null, noteText: '', addOpen: false, form: { full_name: '', job_title: '', source_url: '', email: '' } }">
 	<template x-if="$store.ubr.drawer.contactsLoading && !d">
 		<div class="space-y-3"><div class="ubr-skeleton h-20"></div><div class="ubr-skeleton h-40"></div></div>
 	</template>
@@ -35,6 +35,31 @@
 				<p class="text-[12px] text-ink-muted mt-3" x-show="!d.status && !d.active">Wyszukiwanie decydentów nie było jeszcze uruchamiane dla tej firmy. Źródła: KRS (skład zarządu) i oficjalna strona firmy (zarząd, zespół, kontakt). Nie zgadujemy osób ani adresów e-mail.</p>
 				<p class="text-[12px] text-ink-muted mt-3" x-show="d.active">Szukamy w tle (zwykle 10–40 s). Możesz zamknąć panel — wynik zapisze się automatycznie.</p>
 			</div>
+
+			{{-- Prompt 10.2: telefony decydentów ze strony firmy (strony źródłowe numerów + maks. 2 podstrony zarząd/zespół). --}}
+			<div class="rounded-xl border border-line p-4" x-show="d.phone_scan?.can_run">
+				<div class="flex flex-wrap items-start gap-3">
+					<div class="min-w-0 flex-1">
+						<div class="font-bold text-[13px]">Telefony decydentów ze strony firmy</div>
+						<p class="text-[12px] text-ink-muted mt-0.5">Łączymy numer z osobą tylko przy silnym dowodzie (ten sam blok: imię i nazwisko, stanowisko i numer). Numer w stopce, numer działu lub samo nazwisko na stronie nie wystarcza. Bez Apollo, bezpłatnie.</p>
+					</div>
+					<button type="button" class="ubr-btn-ghost" :disabled="$store.ubr.drawer.phoneScan?.busy" @click="$store.ubr.scanDecisionPhones(d.company.id)">
+						@include('ubr.partials.icon', ['name' => 'phone', 'class' => 'size-3.5'])
+						<span x-text="$store.ubr.drawer.phoneScan?.busy ? 'Sprawdzanie…' : 'Szukaj telefonów decydentów'"></span>
+					</button>
+				</div>
+				<template x-if="$store.ubr.drawer.phoneScan?.result">
+					<div class="mt-3 text-[12px] space-y-1" role="status">
+						<p class="font-semibold" x-text="$store.ubr.drawer.phoneScan.result.message"></p>
+						<template x-for="pp in $store.ubr.drawer.phoneScan.result.people.filter(x => x.phones.length)" :key="pp.name">
+							<p class="text-ink-soft"><span class="font-semibold" x-text="pp.name"></span> <span class="text-ink-muted" x-text="pp.title ? '— ' + pp.title : '— bez stanowiska'"></span>: <span x-text="pp.phones.map(x => x.number + ' (' + x.status_label.toLowerCase() + ')').join(', ')"></span><span class="text-ink-muted" x-show="!pp.contact_id"> · poza bazą (nie decydent)</span></p>
+						</template>
+					</div>
+				</template>
+			</div>
+
+			{{-- Prompt 10.3: kandydaci z Apollo People API Search i dopasowanie do kontaktów (prywatne dla organizacji). --}}
+			@include('ubr.partials.apollo-candidates')
 
 			{{-- Top 3 --}}
 			<section x-show="['completed', 'partial'].includes(d.status) || d.top.length">

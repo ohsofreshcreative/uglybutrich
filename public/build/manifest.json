@@ -37,7 +37,7 @@
     "src": "editor.deps.json"
   },
   "resources/css/app.css": {
-    "file": "assets/app-DWcyEiVm.css",
+    "file": "assets/app-xsADhtcV.css",
     "name": "app",
     "names": [
       "app.css"
@@ -53,7 +53,7 @@
     ]
   },
   "resources/css/editor.css": {
-    "file": "assets/editor-Bq04yJkF.css",
+    "file": "assets/editor-COCa2qCq.css",
     "name": "editor",
     "names": [
       "editor.css"
@@ -69,7 +69,7 @@
     ]
   },
   "resources/css/ubr.css": {
-    "file": "assets/ubr-AMn4VUEE.css",
+    "file": "assets/ubr-BlIYB6qu.css",
     "name": "ubr",
     "names": [
       "ubr.css"
@@ -266,7 +266,7 @@
     "isEntry": true
   },
   "resources/js/ubr.js": {
-    "file": "assets/ubr-DdWTRSTB.js",
+    "file": "assets/ubr-Cnx1h5bF.js",
     "name": "ubr",
     "src": "resources/js/ubr.js",
     "isEntry": true,

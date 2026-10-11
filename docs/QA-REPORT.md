@@ -216,3 +216,209 @@ Uzasadnienie: wszystkie testy automatyczne, integracyjne (mocki), E2E i wizualne
 1. unieważnienie klucza SSH z historii Git (ryzyko wysokie, poza kodem);
 2. weryfikacja wymagań serwera Hostinger (PHP + rozszerzenia, WP-CLI, cron) i konfiguracja z `DEPLOYMENT.md` (`UBR_AUTO_MIGRATE=false`, `UBR_PRIVATE_DIR`, cron systemowy);
 3. świadoma decyzja o Website Analyzerze na Hostingerze (bez Node/Chromium analizy będą PARTIAL — bez screenshotów).
+
+## 11. Prompt 10 — Decision Maker Finder 2.0 + Phone Intelligence + Cold Calling Workspace (10.10.2026)
+
+Środowisko testów: **kontener** (izolowana baza testowa; dane fikcyjne tylko tam). LocalWP: bez instalacji (prompt wyklucza wdrożenie) — **NOT TESTED**. Hostinger: nic nie wykonywano. Apollo: wyłącznie mocki — zapytania do prawdziwego API **NOT VERIFIED**.
+
+### Wyniki testów
+| Zestaw | Wynik | Status |
+|---|---|---|
+| PHP `tests/run.php` (pełna regresja) | **1012/1012** (po backfillu; 986 w pierwszej wersji etapu) (+150 w `tests/calling-p10.php`; 2 asercje w `discover-ui.php` dostosowane do wspólnych szybkich akcji) | PASSED |
+| JS `tests/js/calling.test.mjs` (nowy: `tel:`, schowek, filtry) | 18/18 | PASSED |
+| JS preview-url / ssrf-ip / datetime | 19/19 · 35/35 · 5/5 | PASSED |
+| Playwright P10 (Discover, Prospects, karta firmy) | **71/71** | PASSED (kontener) |
+| Test obciążeniowy 10 000 firm (P10) | listy 33–112 ms, filtry telefonów / gotowości 165–220 ms, „Gotowe do telefonu” 258 ms, Action Center bez cache ~390 ms (P7: ~300 ms) | PASSED / uwaga |
+
+### Zakres testów `calling-p10.php`
+Normalizacja (13 przypadków, w tym 9 fałszywych numerów), ekstrakcja ze strony (tel:, Schema.org, oddziały, typy, stopka, faks, deduplikacja), numer główny i numer zagraniczny, numery ręczne (prywatność między organizacjami, brak nadpisania, IDOR, 403 / 404), Apollo People Search na mocku (stanowiska EN + PL, filtr domeny, firma o podobnej nazwie odrzucona, zamaskowane nazwisko, Dyrektor Produkcji, identyfikator osoby, 0 kredytów), Phone Enrichment na mocku (wyłączone domyślnie, uprawnienia, brak identyfikatora, nieznany koszt, brak zapytań przed potwierdzeniem, token, podwójne kliknięcie, `result_pending`, wynik z kredytami, numer innej osoby pominięty, centrala jako numer firmy, e-mail niezapisany, izolacja organizacji, UNAVAILABLE, ERROR bez ponowienia, przerwane zlecenie, limit dzienny, brak LOCKED / AVAILABLE bez numeru), gotowość PHP = SQL dla 8 przypadków, wielkość firmy, niezmienność danych wejściowych Lead Potential, przejęcie / przekazanie / archiwum / wyścig (drugie połączenie z bazą) / izolacja, wynik rozmowy i historia (etapy, cudza firma, DNC, BLOCKED, brak równoległej historii), listy (dane wiersza, akcje, 10 filtrów, 5 sortowań, filtr na całym zbiorze), Action Center (kolejka, DNC, cudzy opiekun, licznik, KPI bez zmian), bezpieczeństwo (klucz API w odpowiedziach, 403 / 404 między organizacjami, XSS w notatce, SQL injection w filtrach).
+
+### Wykryte w trakcie i poprawione
+| # | Problem | Status |
+|---|---|---|
+| P10-a | Podzapytania gotowości w zapytaniu listy liczone dla całego zbioru przed sortowaniem (+90 ms przy 10 000 firm) → kolumny Cold Calling liczone osobnym zapytaniem tylko dla strony | FIXED (test obciążeniowy) |
+| P10-b | Przy zmianie widoku bazowego Action Center przesunięcie parametrów w zapytaniu follow-upów (regresja wykryta testami 28–55) | FIXED |
+| P10-c | Przycisk „Przejmij” nieaktywny (`disabled` z wartością `undefined`) | FIXED (Playwright) |
+| P10-d | Dwa znaczniki „główny” w karcie firmy (ręczny i ze strony) | FIXED |
+| P10-e | Osoba odrzucona przez organizację mogła dawać READY_DIRECT przez numer pobrany | FIXED |
+| P10-g | **M010 nie przechodziła na MySQL 8.4 (LocalWP):** kolumna `manual` to słowo zastrzeżone w MySQL 8 (MariaDB w kontenerze je przyjmuje). Po nieudanej migracji nowy kod odwoływał się do brakujących tabel → listy i Action Center zwracały 500 przez ok. 4 min. Naprawa: nazwa kolumny w cudzysłowie (`` `manual` ``) w migracji i zapytaniach; migracja uruchomiona ponownie (odpowiednik `wp ubr migrate`) — schemat v10, bez błędów. | FIXED (LocalWP) |
+| P10-h | Na LocalWP znacznik „Duże przedsiębiorstwo (1000+ os.)” przy kolumnie „Wielkość: Brak danych” — znacznik wynikał z przychodu z Apollo (≥ 250 mln), nie z zatrudnienia. Etykieta poprawiona na „1000+ os. lub przychód ≥ 250 mln wg źródła”; wielkość nadal „Brak danych” (bez zgadywania liczby pracowników) | FIXED |
+| P10-i | Komórka Decydent: „Cold call możliwy przez numer firmy” także przy braku numeru; status „Nie wiadomo” → „Numer nieznany” | FIXED |
+| P10-j | Backfill (pilot 5 firm, LocalWP): komórki osób (handlowcy, kierownicy) brane za numer firmy; „Recepcja” jako serwis (podpowiedź JSON-LD wygrywała z etykietą); etykiety w nagłówkach i w treści linku `tel:` pomijane; tekst sklejany przez `<br>` („Kowalczyktel.”); ogólne „biuro” (Biuro Projektowe) jako centrala → klasyfikacja z etykiety tuż przed numerem (stanowiska, imię i nazwisko, działy: kadry, magazyn, zakupy…), etykieta strony ma pierwszeństwo przed JSON-LD, teksty węzłów rozdzielane spacją | FIXED (LocalWP, testy P10-2b) |
+| P10-k | Strona grupy (Alchemia): numer spółki zależnej (Huta Bankowa) jako główny → spółka z formą prawną w etykiecie ≠ firma → BRANCH „inna spółka: …”, nigdy numer główny | FIXED |
+| P10-l | Tekst linku ≠ numer w `tel:` (ZAMET) → pewność „low” i dopisek „[tekst linku: …]” — do ręcznej weryfikacji | FIXED |
+| P10-m | Ponowne odświeżenie zostawiało stare, błędne typy → `replaceExtracted`: numery ze stron pobranych teraz zastępują wcześniejsze z tych samych adresów; numery ręczne bez zmian | FIXED (test ponownego uruchomienia) |
+| P10-n | Odświeżenie ignorowało robots.txt → `RobotsPolicy` (strona Kontakt pomijana przy zakazie) | FIXED |
+| P10-o | Odmiany „telefonu / telefonem”, samo „T 0048…” nierozpoznawane; adres „51 40-698” ucinał etykietę; „Engineering” w nazwie brane za stanowisko | FIXED (P10-2c) |
+| P10-p | Numer zagraniczny lub innej spółki jako główny (SECO/WARWICK: numer z Indii, kraj nieznany w mapie prefiksów) → wykluczenie z numeru głównego także po prefiksie kierunkowym; „HEADQUARTER” (l. poj.) = centrala | FIXED (LocalWP: SECO → 68 382 05 00, Centrala) |
+| P10-q | Strona Kontakt z listą krajów (ISCAR) → jedna dodatkowa strona; najpierw „Polska / Poland / centrala”, dopiero potem ogólne „contact-…” (wcześniej krótszy adres `/uae` wygrywał) | FIXED (LocalWP: ISCAR → 32 735 77 00) |
+| P10-r | `<base href>` ignorowany przy linku względnym do Kontaktu (NG Engineering) | FIXED |
+| P10-s | „Infolinia:” w stopce pod adresami oddziałów oznaczana jako oddział (Eko-Okna) → etykieta z tego samego akapitu ma pierwszeństwo; „oddział” tylko z etykiety lub bloku oddziału | FIXED |
+| P10-t | Kolejka „Gotowe do telefonu” na Dashboardzie bez numeru — trzeba było otwierać kartę firmy → numer główny z linkiem `tel:` i kopiowaniem w wierszu (tabela i karty) | FIXED (LocalWP) |
+| P10-f | Przy 1280 px kolumna Firma miała ~60 px (stałe szerokości odbierały jej miejsce), etykiety wychodziły poza kolumny → kolumny procentowe (Firma ≥ 160 px przy 1280 px), zawijanie nagłówków i etykiet w tabeli | FIXED (pomiar szerokości, zrzuty) |
+
+### Test na żywo — LocalWP (11.10.2026, MySQL 8.4.0)
+Przed instalacją: kopia całej bazy (`ubr-backups/pre-p10-20261011-034855.sql.gz`, 46 tabel, 2120 wierszy, poza katalogiem publicznym), porównanie sum kontrolnych plików motywu (brak zmian na Macu poza plikami paczki). Instalacja paczki + poprawka P10-g, migracja M010 → schemat v10, „ostatni błąd migracji: brak”. Bez zapisów danych biznesowych, bez Apollo, bez nowych analiz; skrypty tymczasowe (kopia, migracja, inspekcja tylko do odczytu) usunięte.
+
+| Obszar | Wynik | Status |
+|---|---|---|
+| Discover (10 wyszukiwań, 65 firm) i Prospects | 200, 49–66 ms; dane Cold Calling dla 65/65 firm; kolumny zgodne ze specyfikacją | PASSED |
+| Telefony firm / decydentów | 0 numerów w danych (analizy i research sprzed etapu 10 nie przechowują HTML ani numerów; 9 kontaktów bez telefonu) — listy poprawnie pokazują „brak numeru” | PASSED (brak danych) |
+| Wielkość firm | 0/65 firm ma dane o zatrudnieniu (Apollo / KRS / VAT ich nie dostarczyły) → „Brak danych” | PASSED (brak danych) |
+| Przypisanie | 2 prospekty bez opiekuna (zapisane przed etapem 4) → „Wolna” + „Przejmij”; filtr „wolne” = 50/50 | PASSED |
+| Podgląd na liście | przycisk „Podgląd” widoczny w kolumnie Strona WWW, otwiera wspólny modal (FAMUR) | PASSED |
+| Filtry | gotowość: 18 + 31 + 1 = 50 (zgodne z rozkładem z listy); telefon: any 0 / none 50; wielkość unknown 50; opiekun free 50 / mine 0; etap „Nowy” 2; analiza 3; lokalizacja „śląskie” 6; sortowania 200 | PASSED |
+| Dashboard / KPI | KPI identyczne jak przed instalacją (2 / 0 / 0 / 3 / 3 / 46), kolejki bez zmian + „Gotowe do telefonu” 0; priorytety NozziTec, FLOWAIR, ZAMET, FAMUR, PCO (bez zmian); 81 ms | PASSED |
+| Responsywność | 5 ekranów (Discover, Prospects, Dashboard, Pipeline, karta firmy) × 1920 / 1440 / 1280 / 768 / 390 px: brak poziomego przewijania, tabela ≥ 1280, karty < 1280, brak błędów JS | PASSED |
+| Karta firmy | sekcja „Telefony firmy” („strony jeszcze nie sprawdzano”), sekcja „Kontakt telefoniczny” w Sprzedaży | PASSED |
+| „Odblokuj telefon” | wyłączone (`disabled`, brak tokenu, brak przycisku na listach) | PASSED |
+| Strona główna WordPressa | 200 (zalogowany i anonimowy), bez błędu krytycznego. Błąd 500 występuje tylko w kontenerze (`sage.view` — środowisko kontenera). W logu LocalWP stare ostrzeżenie (od 09.10) w `sections/header.blade.php`: brak logo w ustawieniach motywu (`$logo` = null) — niezwiązane z etapem 10 | PASSED / uwaga |
+| Testy JS na komputerze z LocalWP | 18/18, 19/19, 35/35, 5/5 | PASSED |
+
+**Odzyskanie numerów bez crawlowania — niemożliwe:** 12 zapisanych analiz przechowuje wyniki pomiarów (`checks`, `pages`, `render`…), bez HTML i bez linków `tel:`; 10 researchy decydentów bez numerów; dowody źródeł (Apollo, KRS, VAT, Wikidata) bez pól telefonu; brak pamięci podręcznej odpowiedzi Apollo. **Sposób uzupełnienia (bezpłatny, bez analizy i bez Apollo):** `wp ubr phones-backfill --org=<slug> --limit=50` (domyślnie tylko lista kandydatów) → po akceptacji `… --execute` (2 zapytania HTTP na firmę: strona główna + Kontakt, ochrona SSRF, przerwa 1 s) albo pojedynczo przycisk „Odśwież ze strony” w karcie firmy. Kandydaci na LocalWP: firmy z domeną, niesprawdzone (do 50). Nie uruchomiono — wymaga zgody.
+
+**Nie sprawdzono na żywo (bez zapisów w bazie użytkownika):** przejęcie firmy, wynik rozmowy, zakaz kontaktu, numer ręczny, odświeżenie ze strony, przekazanie — przetestowane w kontenerze (PHP + Playwright). Wyścig przejęcia, Apollo (prawdziwe API) — NOT VERIFIED na LocalWP.
+
+### Company Phone Backfill — LocalWP (11.10.2026)
+Za zgodą właściciela: istniejący mechanizm odświeżania (`POST /companies/{id}/phones/refresh` = `wp ubr phones-backfill --execute`: strona główna + Kontakt, maks. 1 dodatkowa podstrona, robots.txt, ochrona SSRF, blokada 10 min na firmę). Bez Website Analyzera, bez ponownego wyszukiwania firm, bez Apollo. Pilot na 5 firmach (Alchemia, Metal Expert, GGG, ZAMET, FAMUR) → poprawki P10-j…l → wszystkie 50 firm z domeną (3 przebiegi + ponowienia SECO, ISCAR, Eko-Okna po poprawkach P10-p…s).
+
+| Wskaźnik | Wynik |
+|---|---|
+| Sprawdzone firmy (z domeną) | 50 |
+| Firmy z numerem | **39 (78%)**; z numerem głównym 39; z numerem oznaczonym jako centrala 19 |
+| Numery łącznie | 230 (200 krajowych, 30 zagranicznych — głównie oddziały SECO/WARWICK na świecie) |
+| Typy | centrala 25 · sprzedaż 9 · serwis 25 · dział / osoba 73 · oddział 25 · nieokreślony 73 |
+| Do ręcznej weryfikacji | 20 numerów głównych bez etykiety „centrala” lub komórkowych; 2 numery „low” (ZAMET: tekst linku ≠ `tel:`) |
+| Duplikaty / brak źródła | 0 / 0 (każdy numer ze stroną źródłową) |
+| Ponowne uruchomienie | bez duplikatów; testowy numer ręczny (GGG, zweryfikowany z ggg.pl/kontakt) zachowany i użyty jako główny, następnie usunięty |
+| Firmy bez numeru (11) | błędna / zagraniczna domena (erg.eu, jukieurope.com), domena innego podmiotu (Factories — celowo pominięta), domena zaparkowana (ARM Robotics), portale / stowarzyszenia bez telefonu (Polski Przemysł, Przemysł 4.0, Federacja ZZMK), brak numeru na stronie (CoRobotics, SALVAMAC), brak linku do Kontaktu (SciTeeX), adres zablokowany przez ochronę SSRF (KSB) |
+
+| Sprawdzenie na LocalWP | Wynik | Status |
+|---|---|---|
+| Discover (wyszukiwanie 7, 50 firm) | 28 firm z numerem; `tel:+48…` poprawne (0 błędnych), kopiowanie → E.164 (`+48323596764`) | PASSED |
+| Prospects | 2/2 firm z numerem, tel: i kopiowanie | PASSED |
+| Filtry telefonu (API i UI) | „Numer firmy” 28 = „Jakikolwiek numer” 28 (brak numerów decydentów), „Bez numeru” 22, 28 + 22 = 50; wyszukiwania 6 i 8 spójne | PASSED |
+| Cold Call Readiness | 39 firm „Zadzwoń do firmy” (wcześniej 0) = firmy z numerem głównym | PASSED |
+| „Gotowe do telefonu” | licznik 39 = lista 39 (te same ID), numer + tel: + kopiowanie w wierszu (P10-t) | PASSED |
+| KPI | bez zmian (2 / 0 / 0 / 3 / 3 / 46), priorytety bez zmian | PASSED |
+| Szerokości | Discover / Prospects 1440 / 1280 / 768 / 390, Dashboard 1920–390: brak poziomego przewijania, brak błędów JS | PASSED |
+| Kliknięcie `tel:` bez zapisu rozmowy | nie klikano na LocalWP (otwiera aplikację telefonu w systemie) — test w kontenerze | NOT TESTED (LocalWP) |
+
+### Ograniczenia i decyzje
+- Apollo: People Search może wymagać klucza master; Phone Enrichment dostarcza numery asynchronicznie (webhook albo odpytywanie — aplikacja odpytuje); koszt zależy od planu → w UI „nieznany”. Wszystko na podstawie dokumentacji (10.2026), bez wykonania zapytania — NOT VERIFIED. Test do ręcznego zatwierdzenia: `wp ubr apollo-phone-test --org=<slug> --contact=<id>` (bez zapytania), `--execute --yes` (płatne), `--poll` (wynik, 0 kredytów).
+- Status LOCKED nie jest przypisywany (API nie potwierdza go bez płatnego zapytania); bez numeru stan to UNKNOWN z możliwością odblokowania.
+- Numery wewnętrzne: unikalność numeru w firmie po E.164 (dwa numery wewnętrzne pod tym samym numerem zapisują się jako jeden).
+- Odświeżanie numerów: blokada 10 min na firmę, bez dziennego limitu organizacji (ręczne, pojedyncze firmy).
+- Action Center bez cache ~390 ms przy 10 000 firm (liczenie gotowości dla licznika „Gotowe do telefonu”); wynik w cache 60 s.
+- Publiczna strona główna WordPressa w kontenerze zwraca błąd 500 (`Class "sage.view" does not exist`); aplikacja `/app/` działa. Przyczyny nie badano (zmiany etapu 10 dotyczą tylko widoków `ubr/*`) — warto sprawdzić stronę główną na LocalWP po instalacji.
+
+### Do wykonania przez właściciela
+1. Zgoda na instalację paczki na LocalWP (uruchomi M010 — tylko nowe tabele / kolumny; kopia bazy LocalWP przed instalacją).
+2. Decyzja o włączeniu `UBR_APOLLO_PHONE_ENABLED` i ewentualny jeden ręczny test płatny.
+3. Bez zmian z etapu 7: unieważnienie klucza SSH, konfiguracja produkcyjna, Website Analyzer na Hostingerze.
+
+## 12. Prompt 10.2 — Direct Decision Maker Phones (11.10.2026)
+
+Środowiska: **kontener** (testy automatyczne, Playwright na danych testowych) i **LocalWP** (MySQL 8.4, dane rzeczywiste). Bez Apollo Phone Enrichment, bez płatnych zapytań, bez Git Push / Hostingera, bez ClickUp. Kopia bazy przed M011: `ubr-backups/pre-p102-20261011-081110.sql.gz` (37 tabel UBR + opcje `ubr_*`, 1990 wierszy).
+
+### Wyniki testów
+| Zestaw | Wynik | Status |
+|---|---|---|
+| PHP `tests/run.php` (pełna regresja) | **1082/1082** (+70 testów Prompt 10.2: 69 w nowym `tests/dm-phones-p102.php` i 1 w `calling-p10.php`; testy P10 i P7 dostosowane: READY_DIRECT wymaga powiązania z dowodem, `safeTel` w linkach) | PASSED |
+| JS (kontener i komputer z LocalWP) | 18/18 · 19/19 · 35/35 · 5/5 | PASSED |
+| Playwright P10.2 (kontener: Discover, Prospects, Dashboard × 1920 / 1440 / 1280 / 768 / 390, kolumny, tel:, kopiowanie, filtry, karta firmy — potwierdź / odrzuć / przypisz, kolejka „do decydenta”) | **55/55** | PASSED (kontener) |
+| Playwright P10 (regresja) | **71/71** (Phone Enrichment na mocku w kontenerze — tymczasowy mu-plugin usunięty) | PASSED (kontener) |
+
+### Wykryte w trakcie i poprawione
+| # | Problem | Status |
+|---|---|---|
+| P102-a | Strona w innym kodowaniu niż UTF-8 (7 firm na LocalWP) → `preg_split` = false → błąd 500 w `PeopleExtractor::classify` (błąd istniejący, ujawniony przez nową analizę) → zabezpieczenie i `mb_scrub` | FIXED (LocalWP) |
+| P102-b | Literówka na stronie Alchemii („Kornulik” obok 2× „Korniluk”) → dwa kontakty → strażnik podobnych nazwisk (to samo imię, różnica ≤ 2 znaki, najpierw częstsza pisownia) — bez łączenia i bez duplikatu; utworzony duplikat dezaktywowany (nie usunięty) | FIXED (LocalWP) |
+| P102-c | Bloki osób w stopce („Michał Zipser – Sales Manager tel. …”) oznaczane jako numer ogólny → blok osoby w stopce = maks. LIKELY; stanowiska spoza katalogu ról rozpoznawane jako dowód struktury | FIXED |
+| P102-d | Adresy e-mail osób w zapisanych fragmentach dowodów i opisach numerów → usuwane („[e-mail]”), także w danych zapisanych wcześniej w tej sesji na LocalWP | FIXED (LocalWP) |
+| P102-e | 4 numery w jednym bloku osoby (prezes + sekretariat + dział + oddział) → UNCERTAIN; numery opisane jako centrala / dział / oddział nie liczą się do „wielu numerów” | FIXED |
+
+### Walidacja na LocalWP (dane rzeczywiste)
+Bez ponownego masowego backfillu: pobrane tylko strony źródłowe zapisanych numerów „dział / osoba” / sprzedaż / serwis (25 firm, maks. 3 na firmę) i maks. 2 podlinkowane podstrony zarząd / zespół / media — w końcowym przebiegu 40 stron (3 przebiegi z poprawkami; robots.txt, ochrona SSRF, blokada 10 min).
+
+| Wskaźnik | Wynik |
+|---|---|
+| Przeanalizowane numery | 189 z 230 numerów firm sklasyfikowanych (strony ponownie pobrane); w tym **71 z 73** numerów „dział / osoba” (2 — strony źródłowe poza limitem) |
+| 73 numery „dział / osoba” | numer osoby (PERSON_DIRECT) **40** · numer działu 6 · numer ogólny 9 · oddział 0 · właściciel nieustalony 16 · nie sprawdzono 2 |
+| Osoby na stronach | 82 (z numerem: 51); powiązania osoba ↔ numer: potwierdzone 7, prawdopodobne 41, do weryfikacji 9, odrzucone 6 — wszystkie potwierdzone dotyczą osób spoza ról decydentów (rzeczniczka prasowa, kierownicy sprzedaży / magazynu / działu) |
+| Decydenci na stronach | 8 osób z rolą decydenta: 7 nowych kontaktów ze źródłem (Alchemia: Prezes + 2 wiceprezesów; KGHM ZANAM: Prezes + 2 wiceprezesów; SECO/WARWICK: VP Marketing), 1 wariant z literówką (bez duplikatu); istniejący decydenci FAMUR / PCO — bez numerów na stronach |
+| Telefon decydenta | **potwierdzony: 0 firm**; prawdopodobny: 1 (SECO/WARWICK — Katarzyna Sawka, VP Marketing, +48 512 811 648, blok „Or contact” na stronie Media Center; zgodność potwierdzona ręcznym odczytem strony, decyzja „Potwierdź” pozostawiona właścicielowi); odrzucony: 1 (KGHM ZANAM — wiceprezes przy numerze centrali) |
+| Gotowość | „Gotowe do telefonu” 39 = bezpośrednio do decydenta 0 + przez centralę 39; READY_DIRECT 0 (bez potwierdzonego numeru); KPI bez zmian (2 / 0 / 0 / 3 / 3 / 46) |
+| Filtry (wyszukiwanie z 50 firmami) | bezpośredni 1 + brak telefonu decydenta 49 = 50; potwierdzony 0; do weryfikacji 1; tylko telefon firmy 28; numer firmy 29; źródło „strona firmowa” 1; stanowisko „Dyrektor marketingu” 1 | 
+
+| Sprawdzenie | Wynik | Status |
+|---|---|---|
+| Migracja M011 | schemat v11, tabela powiązań i kolumny właściciela numeru, brak błędów w logu | PASSED |
+| Discover / Prospects | „Telefon decydenta: do weryfikacji” (SECO), numer decydenta złotym kolorem obok numeru firmy („firma · Centrala”), `tel:+48512811648`, kopiowanie → `+48512811648`; brak poziomego przewijania 1920–390 px; brak błędów JS | PASSED |
+| Karta firmy (dane) | powiązanie ze statusem, źródłem, dowodem bez e-maili, datą pozyskania, przyciskami i listą 23 numerów do przypisania (sprawdzone w DOM / API; panel w karcie w tle przeglądarki nie zakończył animacji — wygląd sprawdzony w kontenerze) | PASSED (dane) / NOT TESTED (wygląd na LocalWP) |
+| Dashboard | przełącznik „Bezpośrednio do decydenta (0) / Przez centralę firmy (39)”, 20 linków tel: na stronie listy, 1920–390 px bez przewijania | PASSED |
+| Decyzje potwierdź / odrzuć / przypisz | nie wykonywane na danych właściciela (decyzje biznesowe) — testy PHP + Playwright w kontenerze | NOT TESTED (LocalWP) |
+| Apollo People Search | jeden kontrolowany test (FAMUR): HTTP 200, 7 osób, nazwiska zamaskowane („Dr***z”), identyfikatory osób, `has_direct_phone` „Yes” / „Maybe”, bez e-maili i telefonów; zapis w dzienniku jako niepłatny (0 kredytów wg dokumentacji); nic nie zapisano | PASSED |
+| Apollo Phone Enrichment | gotowy technicznie (Prompt 10), wyłączony; wymaga identyfikatora osoby Apollo — żaden kontakt na LocalWP go nie ma | BLOCKED (wymaga decyzji / identyfikatorów) |
+
+### Ograniczenia
+- Na stronach polskich firm przemysłowych numery osób to głównie handlowcy i kierownicy działów; zarząd rzadko publikuje bezpośrednie numery — stąd 0 potwierdzonych numerów decydentów.
+- Wykrywanie stopki po klasach CSS bywa zbyt szerokie (SECO: blok „Or contact” w treści oznaczony jako stopka → LIKELY zamiast VERIFIED).
+- Osoby bez stanowiska z katalogu ról nie są dodawane jako decydenci; ich numery opisane przy numerze firmy („Numer osoby: imię i nazwisko”).
+- People Search zwraca zamaskowane nazwiska — kontaktów nie tworzymy; dopasowanie po imieniu i masce nazwiska (np. „Aleksandra Dr***z” = Aleksandra Drożdż, FAMUR) wymaga decyzji o regule.
+
+
+## 13. Prompt 10.3 — Apollo Contact Matching & Phone Unlock (11.10.2026)
+
+Środowiska: **kontener** (testy automatyczne na mockach Apollo, Playwright na danych testowych) i **LocalWP** (MySQL 8.4, dane rzeczywiste).
+Bez płatnych zapytań Apollo, bez rzeczywistego Phone Enrichment, bez nowych zapytań People Search, bez Git Push / Hostingera / ClickUp.
+Wyniki mockowane NIE potwierdzają działania rzeczywistego API.
+
+### Audyt Apollo (dokumentacja docs.apollo.io, 10.2026 + jeden rzeczywisty test People Search z Prompt 10.2)
+| Funkcja | W API | Na obecnym planie | Koszt | Zweryfikowana |
+|---|---|---|---|---|
+| People API Search (`POST /api/v1/mixed_people/api_search`) | tak | tak — klucz master (rzeczywisty test FAMUR: HTTP 200, 7 osób) | 0 kredytów wg dokumentacji | rzeczywiste API (1 zapytanie, Prompt 10.2); koszt — dokumentacja |
+| Pełne dane osoby w wyniku wyszukiwania (pełne nazwisko, e-mail, telefon) | nie (wyszukiwanie nie zwraca e-maili ani numerów; nazwisko zamaskowane `last_name_obfuscated`) | nie | — | rzeczywiste API (FAMUR: 7/7 nazwisk zamaskowanych) |
+| People Enrichment (`POST /api/v1/people/match`, po `id`) — pełne dane osoby | tak | niepotwierdzone (nie wywoływano) | 1–9 kredytów / osobę wg dokumentacji; naliczane tylko za znalezione dane | dokumentacja; mock |
+| Phone Availability (sygnał przed odblokowaniem) | częściowo: pole `has_direct_phone` w wyniku wyszukiwania („Yes” / „Maybe: …”) — **pole nieudokumentowane** | tak (widoczne w rzeczywistej odpowiedzi) | 0 (część wyszukiwania) | rzeczywiste API (FAMUR: 5× „Yes”, 1× „Maybe”, 1× brak); znaczenie niepotwierdzone dokumentacją |
+| Phone Enrichment (`reveal_phone_number=true`, asynchronicznie: webhook albo `poll_only` + `webhook_result`) | tak | niepotwierdzone (nie wywoływano) | wg dokumentacji +8 kredytów za numer komórkowy (łącznie do 9 / osobę); waterfall telefonów 8–25+ kredytów (nieużywany) | dokumentacja; mock |
+| Saldo kredytów przez API | brak udokumentowanego endpointu salda; `usage_stats` (0 kredytów) zwraca limity zapytań | — | 0 | dokumentacja |
+
+### Wyniki testów
+| Zestaw | Wynik | Status |
+|---|---|---|
+| PHP `tests/run.php` (pełna regresja) | **1174/1174** (+92 testy w nowym `tests/apollo-matching-p103.php`; 1 test P10 dostosowany: koszt „wymaga potwierdzenia” ze stawkami z dokumentacji zamiast „bez liczby kredytów”) | PASSED (kontener) |
+| JS (kontener) | 18/18 · 5/5 · 19/19 · 35/35 | PASSED |
+| Playwright P10.3 (kontener: Discover / Prospects / Dashboard × 1920 / 1440 / 1280 / 768 / 390 bez zapytań Apollo, karta firmy — sekcja Apollo na każdej szerokości, maska, poziomy, dostępność, zatwierdź / odłącz, szczegóły, modal z powodem blokady) | **76/76** | PASSED (kontener) |
+| Playwright P10.2 i P10 (regresja) | **55/55** · **71/71** (Phone Enrichment na mocku — tymczasowy mu-plugin usunięty) | PASSED (kontener) |
+
+Pokrycie testów PHP (mocki): matching — pełne imię i nazwisko + firma (EXACT), maska (STRONG / POSSIBLE, nigdy EXACT), podobne nazwiska
+(Nowak / Nowaczek), dwie osoby o tym samym nazwisku, podobna nazwa firmy z inną domeną, istniejący identyfikator Apollo, konflikt
+identyfikatorów (409), odrzucone dopasowanie, ponowne wyszukiwanie bez nadpisania decyzji, brak duplikatów; API — sukces, dane zamaskowane,
+brak osób, 403, 429, błąd sieci, brak informacji o telefonie, cache, blokada równoległa, limit dzienny, 24 h na firmę; Phone Unlock —
+domyślna blokada, wywołanie REST z poprawnie podpisanym tokenem przy wyłączonej funkcji (422, 0 zapytań), obrona w głąb w `request()`,
+brak podwójnego obciążenia, brak automatycznego wywołania (karta / listy / kandydaci = 0 zapytań), brak identyfikatora Apollo, numer już
+zapisany, użytkownik bez uprawnień, „Nie kontaktować”, symulowany sukces (wynik tylko dla osoby ze zlecenia), symulowany błąd; IDOR / izolacja
+organizacji, klucz API poza adresem i odpowiedzią, retencja kandydatów.
+
+### Wykryte w trakcie i poprawione
+| # | Problem | Status |
+|---|---|---|
+| P103-a | `applyResult` przy kontakcie bez identyfikatora przyjmowało numery dowolnej osoby z odpowiedzi → wynik przypisywany wyłącznie osobie z identyfikatora zapisanego w zleceniu (`phone_reveals.apollo_person_id`), bez identyfikatora — nic | FIXED |
+| P103-b | Zapis kandydata: `has_email_signal = NULL` przekazywany jako pusty tekst do TINYINT (błąd w trybie ścisłym MySQL) | FIXED |
+| P103-c | Klucze limitów wyszukiwania kolidowały z prefiksem pamięci podręcznej People Search (czyszczenie cache kasowało limit 24 h) → osobne klucze `ubr_apollo_search_*` | FIXED |
+
+### Bezpieczeństwo
+Uprawnienia: odczyt `contacts.view`, wyszukiwanie `contacts.run`, decyzje `contacts.manage`, odblokowanie `contacts.reveal` (owner / admin).
+Izolacja: dopasowania z `organization_id`, firma przez `isVisibleTo` (IDOR → 404). CSRF: nonce REST WordPressa. XSS: dane z Apollo
+wyłącznie przez `x-text`, notatki bez HTML. SQL: zapytania przygotowane. Limity: 24 h na firmę, dzienny limit organizacji, blokada
+równoległa, limit tempa klienta HTTP. Klucz API tylko w nagłówku `x-api-key` (nie w adresie, logach, odpowiedziach ani frontendzie).
+Identyfikatory Apollo nie trafiają do przeglądarki. Retencja: `wp ubr contacts purge --days=N`. Dane B2B; publiczna dostępność numeru
+nie jest zgodą na kontakt marketingowy (status „Nie kontaktować” blokuje pobieranie numeru).
+
+### Walidacja na LocalWP
+<!-- P103-LOCALWP -->
+**BLOCKED (11.10.2026):** strona `uglybutirch.local` nie odpowiadała w trakcie etapu (aplikacja Local zatrzymana / komputer uśpiony).
+Kontrola rozbieżności wykonana: wszystkie pliki motywu na LocalWP poza 20 zmienianymi w tym etapie są identyczne z kontenerem
+(537 sum kontrolnych), zmieniane pliki nie były edytowane po wdrożeniu 10.2. Paczka wdrożeniowa i skrypty (kopia bazy, walidacja z cache bez
+zapytań do Apollo) przygotowane; wdrożenie i migracja M012 czekają na uruchomienie strony.

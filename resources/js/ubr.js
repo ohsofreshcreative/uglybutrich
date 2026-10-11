@@ -8,6 +8,7 @@ import { salesStore, registerPipeline, localInput } from './ubr/pipeline.js';
 import { leadStore } from './ubr/lead.js';
 import { registerUi, livePreviewUrl, safeWebsiteUrl } from './ubr/ui.js';
 import { registerDashboard } from './ubr/dashboard.js';
+import { callingStore, CALL_FILTERS, activeCount } from './ubr/calling.js';
 
 const CONFIDENCE = { confirmed: 'Potwierdzona', declared: 'Wg źródła', uncertain: 'Niepewna', unavailable: 'Brak' };
 const LOCATION = {
@@ -57,8 +58,9 @@ document.addEventListener('alpine:init', () => {
   Alpine.store('ubr', {
     ...salesStore(),
     ...leadStore(),
+    ...callingStore(),
     toasts: [],
-    drawer: { open: false, loading: false, saving: false, error: null, company: null, tab: 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null, lead: null, leadLoading: false },
+    drawer: { open: false, loading: false, saving: false, error: null, company: null, tab: 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null, lead: null, leadLoading: false, phoneScan: null, apollo: null, apolloBusy: false, apolloConsent: false, apolloFocus: false },
     preview: { open: false, loading: false, company: null, liveUrl: null, openUrl: null, upgraded: false, analysis: null, mode: 'live', view: 'desktop', zoom: 1, fit: true, error: null, frameKey: 0, returnFocus: null },
 
     toast(message, type = 'info') {
@@ -153,6 +155,7 @@ document.addEventListener('alpine:init', () => {
         const data = await api(`/companies/${id}/contacts`);
         if (this.drawer.company?.id !== id) return;
         this.drawer.contacts = data;
+        if (!poll && !this.drawer.apollo) this.loadApollo(id);
         clearTimeout(this._contactsTimer);
         if (data.active && this.drawer.open) {
           this._contactsTimer = setTimeout(() => this.loadContacts(true), 5000);
@@ -177,6 +180,105 @@ document.addEventListener('alpine:init', () => {
       }
     },
 
+    // Prompt 10.2 — powiązania numer ↔ decydent (decyzje prywatne organizacji; numer firmy nigdy nie jest usuwany).
+    async phoneLink(contact, body) {
+      try {
+        const r = await api(`/contacts/${contact.id}/phone-links`, { method: 'POST', body });
+        contact.phone_links = r.phone_links;
+        window.dispatchEvent(new CustomEvent('ubr:contacts-finished', { detail: { companyId: this.drawer.company?.id } }));
+        this.toast(r.message);
+      } catch (e) {
+        this.error(e);
+      }
+    },
+
+    async removePhoneLink(contact, link) {
+      try {
+        const r = await api(`/contacts/${contact.id}/phone-links/${link.id}`, { method: 'DELETE' });
+        contact.phone_links = r.phone_links;
+        window.dispatchEvent(new CustomEvent('ubr:contacts-finished', { detail: { companyId: this.drawer.company?.id } }));
+        this.toast(r.message);
+      } catch (e) {
+        this.error(e);
+      }
+    },
+
+    async scanDecisionPhones(companyId) {
+      if (this.drawer.phoneScan?.busy) return;
+      this.drawer.phoneScan = { busy: true, result: null };
+      try {
+        const result = await api(`/companies/${companyId}/decision-phones/scan`, { method: 'POST' });
+        this.drawer.phoneScan = { busy: false, result };
+        this.drawer.contacts = await api(`/companies/${companyId}/contacts`);
+        window.dispatchEvent(new CustomEvent('ubr:contacts-finished', { detail: { companyId } }));
+        this.toast(result.message);
+      } catch (e) {
+        this.drawer.phoneScan = { busy: false, result: null };
+        this.error(e);
+      }
+    },
+
+    // Prompt 10.3 — Apollo Contact Matching: kandydaci z bazy (bez zapytań do Apollo przy otwarciu karty).
+    async loadApollo(companyId) {
+      try {
+        const data = await api(`/companies/${companyId}/apollo-candidates`);
+        if (this.drawer.company?.id === companyId) this.drawer.apollo = { ...data, search: this.drawer.apollo?.search || null };
+      } catch (e) {
+        if (this.drawer.company?.id === companyId) this.drawer.apollo = { error: e.message, candidates: [] };
+      }
+    },
+
+    /** „Szukaj decydentów w Apollo” — zapytanie tylko po zaznaczeniu zgody (confirm); bez zgody serwer nic nie wysyła. */
+    async searchApollo(companyId) {
+      if (this.drawer.apolloBusy) return;
+      this.drawer.apolloBusy = true;
+      try {
+        const data = await api(`/companies/${companyId}/apollo-candidates/search`, { method: 'POST', body: { confirm: !!this.drawer.apolloConsent } });
+        if (this.drawer.company?.id !== companyId) return;
+        this.drawer.apollo = data;
+        this.drawer.apolloConsent = false;
+        this.toast(data.search?.message || 'Gotowe.', data.search?.state === 'error' ? 'error' : 'info');
+      } catch (e) {
+        this.error(e);
+      } finally {
+        this.drawer.apolloBusy = false;
+      }
+    },
+
+    async apolloDecide(match, action) {
+      const companyId = this.drawer.company?.id;
+      try {
+        const data = await api(`/apollo-matches/${match.id}`, { method: 'POST', body: { action } });
+        this.drawer.apollo = { ...data, search: this.drawer.apollo?.search || null };
+        this.toast({ approve: 'Dopasowanie zatwierdzone — identyfikator Apollo przypisany do kontaktu (tylko w Twojej organizacji).', reject: 'Dopasowanie odrzucone.', detach: 'Identyfikator Apollo odłączony od kontaktu.', recheck: 'Sprawdzono ponownie (bez zapytania do Apollo).' }[action] || 'Zapisano.');
+        window.dispatchEvent(new CustomEvent('ubr:contacts-finished', { detail: { companyId } }));
+      } catch (e) {
+        this.error(e);
+      }
+    },
+
+    async apolloLink(candidate, contactId) {
+      if (!contactId) return;
+      const companyId = this.drawer.company?.id;
+      try {
+        const data = await api(`/apollo-candidates/${candidate.id}/link`, { method: 'POST', body: { contact_id: Number(contactId) } });
+        this.drawer.apollo = { ...data, search: this.drawer.apollo?.search || null };
+        this.toast('Połączono kandydata Apollo z kontaktem (tylko w Twojej organizacji).');
+        window.dispatchEvent(new CustomEvent('ubr:contacts-finished', { detail: { companyId } }));
+      } catch (e) {
+        this.error(e);
+      }
+    },
+
+    /** Lista → karta firmy, sekcja Apollo (tylko odczyt z bazy). */
+    checkApollo(companyId) {
+      this.drawer.tab = 'contacts';
+      this.openCompany(companyId).then(() => {
+        this.drawer.apolloFocus = true;
+        setTimeout(() => document.querySelector('[data-apollo-section]')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 400);
+      });
+    },
+
     async addContact(form) {
       try {
         this.drawer.contacts = await api(`/companies/${this.drawer.company.id}/contacts`, { method: 'POST', body: form });
@@ -189,6 +291,8 @@ document.addEventListener('alpine:init', () => {
     },
 
     escape() {
+      if (this.outcome.open) return this.closeOutcome();
+      if (this.reveal.open) return this.closeReveal();
       if (this.preview.open) return this.closePreview();
       this.closeDrawer();
     },
@@ -338,7 +442,7 @@ document.addEventListener('alpine:init', () => {
       clearTimeout(this._analysisTimer);
       clearTimeout(this._contactsTimer);
       clearTimeout(this._clickupTimer);
-      this.drawer = { open: true, loading: true, saving: false, error: null, company: null, tab: this.drawer.tab || 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null, lead: null, leadLoading: false };
+      this.drawer = { open: true, loading: true, saving: false, error: null, company: null, tab: this.drawer.tab || 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null, lead: null, leadLoading: false, phoneScan: null, apollo: null, apolloBusy: false, apolloConsent: false, apolloFocus: false };
       try {
         this.drawer.company = await api(`/companies/${id}`);
         if (this.drawer.tab === 'analysis') this.loadAnalysis();
@@ -467,6 +571,10 @@ document.addEventListener('alpine:init', () => {
     analysisFilters: { min_opportunity: '', confidence: '', min_findings: '' },
     contactFilters: { has_contact: '', min_contact_score: '', contact_confidence: '', contact_role: '', min_contacts: '' },
     leadFilters: { min_lead: '', lead_confidence: '', redesign: '', recommendation: '', no_blockers: '' },
+    callFilters: CALL_FILTERS(),
+    get callFilterCount() {
+      return activeCount(this.callFilters);
+    },
     // Zwijany formularz: stan zapamiętany lokalnie (wygoda użytkownika), wartości pól zostają w stanie komponentu.
     formOpen: (() => {
       try {
@@ -600,6 +708,8 @@ document.addEventListener('alpine:init', () => {
       window.addEventListener('ubr:contacts-queued', () => this.search && this.loadResults(this.results.page || 1, true));
       window.addEventListener('ubr:contacts-finished', () => this.search && this.loadResults(this.results.page || 1, true));
       window.addEventListener('ubr:lead-changed', () => this.search && this.loadResults(this.results.page || 1, true));
+      window.addEventListener('ubr:calling-changed', () => this.search && this.loadResults(this.results.page || 1, true));
+      window.addEventListener('ubr:pipeline-changed', () => this.search && this.loadResults(this.results.page || 1, true));
     },
 
     destroy() {
@@ -676,7 +786,7 @@ document.addEventListener('alpine:init', () => {
       if (!silent) this.results.loading = true;
       try {
         const data = await api(`/discovery/searches/${this.search.id}/results`, {
-          query: { page, per_page: this.results.per_page, filter: this.resultFilter, sort: this.resultSort, ...this.analysisFilters, ...this.contactFilters, ...this.leadFilters },
+          query: { page, per_page: this.results.per_page, filter: this.resultFilter, sort: this.resultSort, ...this.analysisFilters, ...this.contactFilters, ...this.leadFilters, ...this.callFilters },
         });
         this.results = { ...this.results, ...data, loading: false };
         this.watchAnalyses();
@@ -715,6 +825,8 @@ document.addEventListener('alpine:init', () => {
 
   Alpine.data('ubrProspects', () => ({
     filters: { search: '', region: '', has_domain: '', verification: '', domain_status: '', min_relevance: '', min_opportunity: '', analysis: '', has_contact: '', contact_confidence: '', min_contact_score: '', pipeline_status: '', priority: '', owner: '', archived: '', min_lead: '', lead_confidence: '', redesign: '', recommendation: '', no_blockers: '' },
+    callFilters: CALL_FILTERS(),
+    moreFilters: false,
     pollTimer: null,
     selected: [],
     exportBusy: false,
@@ -746,11 +858,15 @@ document.addEventListener('alpine:init', () => {
     confirmId: null,
 
     get hasFilters() {
-      return Object.values(this.filters).some(Boolean);
+      return Object.values(this.filters).some(Boolean) || activeCount(this.callFilters) > 0;
     },
 
     init() {
+      // Wejście z Discover („Otwórz w Prospects”): ?search=<nazwa firmy>.
+      const q = new URLSearchParams(window.location.search).get('search');
+      if (q) this.filters.search = q.slice(0, 120);
       this.load(1);
+      window.addEventListener('ubr:calling-changed', () => this.load(this.list.page));
       window.addEventListener('ubr:company-verified', () => this.load(this.list.page));
       window.addEventListener('ubr:analysis-queued', () => this.load(this.list.page));
       window.addEventListener('ubr:analysis-finished', () => this.load(this.list.page));
@@ -772,7 +888,7 @@ document.addEventListener('alpine:init', () => {
       this.error = null;
       try {
         const filters = { ...this.filters, owner: this.filters.owner === 'me' ? String(window.UBR.userId) : this.filters.owner };
-        const data = await api('/prospects', { query: { ...filters, sort: this.sort, dir: this.dir, page, per_page: this.list.per_page } });
+        const data = await api('/prospects', { query: { ...filters, ...this.callFilters, sort: this.sort, dir: this.dir, page, per_page: this.list.per_page } });
         this.list = { ...this.list, ...data, loading: false };
         this.regions = data.regions;
         this.members = data.members || [];

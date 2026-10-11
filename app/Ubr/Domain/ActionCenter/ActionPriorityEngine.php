@@ -62,7 +62,7 @@ final class ActionPriorityEngine
 
 	/**
 	 * Typ działania z rekomendacji dla firmy albo null (brak działania). Sygnały:
-	 * has_li, has_blocker, recommendation, analysis_status, domain, prospect_status, prospect_archived, has_open_followup.
+	 * has_li, has_blocker, do_not_contact, recommendation, analysis_status, domain, prospect_status, prospect_archived, has_open_followup.
 	 *
 	 * @param array<string, mixed> $s
 	 * @return array{type: string, rule: string}|null
@@ -81,6 +81,10 @@ final class ActionPriorityEngine
 
 		if (! empty($s['has_blocker'])) {
 			return null; // hard blocker → nigdy rekomendacja kontaktu (kolejka „Blocked”)
+		}
+
+		if (! empty($s['do_not_contact'])) {
+			return null; // zakaz kontaktu w organizacji (Prompt 10) — nigdy w priorytetach ani kolejkach kontaktu
 		}
 
 		if ($status !== null && in_array($status, self::CLOSED_STATUSES, true)) {
@@ -126,6 +130,7 @@ final class ActionPriorityEngine
 			WHEN li.id IS NULL THEN NULL
 			WHEN p.id IS NOT NULL AND p.archived_at IS NOT NULL THEN NULL
 			WHEN li.has_blocker = 1 THEN NULL
+			WHEN p.do_not_contact = 1 THEN NULL
 			WHEN p.status IN (" . $in(self::CLOSED_STATUSES) . ") THEN NULL
 			WHEN p.status IN (" . $in(self::CONVERSATION_STATUSES) . ") THEN NULL
 			WHEN p.next_action_at IS NOT NULL THEN NULL

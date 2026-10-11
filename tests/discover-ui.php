@@ -76,8 +76,10 @@ UbrT::ok(str_contains($duiJs, "['http:', 'https:']") && str_contains($duiJs, 'u.
 
 $duiDiscover = $duiView('pages/discover.blade.php');
 UbrT::ok(str_contains($duiDiscover, 'table-fixed') && ! preg_match('/<table[^>]*min-w-\[/', $duiDiscover) && ! str_contains($duiDiscover, 'overflow-x-hidden'), 'tabela Discover: table-fixed, bez min-width i bez ukrywania przepełnienia');
-UbrT::ok(str_contains($duiDiscover, "@include('ubr.partials.row-actions'"), 'Discover używa wspólnego menu ⋯');
-UbrT::ok(str_contains($duiView('pages/prospects.blade.php'), "@include('ubr.partials.row-actions'"), 'Prospects używa wspólnego menu ⋯');
+// Prompt 10: menu ⋯ jest częścią wspólnych szybkich akcji Cold Calling (partials/call/quick-actions), które dołącza row-actions.
+$duiQuick = $duiView('partials/call/quick-actions.blade.php');
+UbrT::ok(str_contains($duiDiscover, "@include('ubr.partials.call.quick-actions'") && str_contains($duiQuick, "@include('ubr.partials.row-actions'"), 'Discover używa wspólnego menu ⋯');
+UbrT::ok(str_contains($duiView('pages/prospects.blade.php'), "@include('ubr.partials.call.quick-actions'"), 'Prospects używa wspólnego menu ⋯');
 $duiMenu = $duiView('partials/row-actions.blade.php');
 UbrT::ok(str_contains($duiMenu, 'x-teleport="body"') && str_contains($duiMenu, 'role="menu"') && str_contains($duiMenu, 'aria-haspopup="menu"'), 'menu ⋯ renderowane w <body> (nie jest obcinane), z rolami ARIA');
 foreach (["can('analysis.run')", "can('contacts.run')", "can('prospects.manage')"] as $duiCan) {

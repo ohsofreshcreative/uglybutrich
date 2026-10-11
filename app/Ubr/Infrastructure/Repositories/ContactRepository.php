@@ -246,7 +246,7 @@ class ContactRepository
 
 		$this->db->insert(Tables::CONTACT_SUPPRESSIONS, ['company_id' => $companyId, 'person_key' => $personKey, 'reason' => $reason ? mb_substr($reason, 0, 255) : null, 'created_by' => $userId, 'created_at' => Db::now()]);
 		// Dane osoby usuwane z aktywnych wyników (źródła i historia pozostają do audytu do czasu retencji).
-		$this->db->execute("UPDATE {$this->t()} SET active = 0, rank_position = NULL, public_business_email = NULL, public_business_phone = NULL, professional_profile_url = NULL, updated_at = %s WHERE company_id = %d AND person_key = %s", Db::now(), $companyId, $personKey);
+		$this->db->execute("UPDATE {$this->t()} SET active = 0, rank_position = NULL, public_business_email = NULL, public_business_phone = NULL, phone_e164 = NULL, professional_profile_url = NULL, updated_at = %s WHERE company_id = %d AND person_key = %s", Db::now(), $companyId, $personKey);
 	}
 
 	/**
@@ -263,6 +263,12 @@ class ContactRepository
 	 */
 	private function encode(array $data): array
 	{
+		// Znormalizowany numer osoby (E.164) — do odróżnienia numeru firmy (centrala) od bezpośredniego numeru osoby.
+		if (array_key_exists('public_business_phone', $data)) {
+			$n = $data['public_business_phone'] ? \App\Ubr\Domain\Phones\PhoneNumber::parse((string) $data['public_business_phone']) : null;
+			$data['phone_e164'] = $n['e164'] ?? null;
+		}
+
 		foreach (self::JSON as $key) {
 			if (array_key_exists($key, $data) && is_array($data[$key])) {
 				$data[$key] = wp_json_encode($data[$key]);

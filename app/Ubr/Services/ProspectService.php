@@ -42,8 +42,9 @@ class ProspectService
 
 		if ($result['created']) {
 			$pipeline->event($ctx->organizationId, $result['id'], $ctx->userId, 'created', null, 'new');
-			// Domyślny właściciel = osoba, która dodała prospekt.
-			$pipeline->updateProspect($ctx->organizationId, $result['id'], ['owner_user_id' => $ctx->userId, 'status_changed_at' => \App\Ubr\Infrastructure\Database\Db::now()]);
+			$pipeline->updateProspect($ctx->organizationId, $result['id'], ['status_changed_at' => \App\Ubr\Infrastructure\Database\Db::now()]);
+			// Domyślny właściciel = osoba, która dodała prospekt — atomowo, tylko gdy nikt go w międzyczasie nie przejął.
+			app(OwnershipService::class)->assignIfFree($ctx, (int) $result['id']);
 		} elseif ($result['restored'] ?? false) {
 			$pipeline->event($ctx->organizationId, $result['id'], $ctx->userId, 'restored', null, null);
 		}
@@ -97,7 +98,7 @@ class ProspectService
 				'contact_confidence' => sanitize_key((string) ($query['contact_confidence'] ?? '')),
 				'contact_role' => sanitize_key((string) ($query['contact_role'] ?? '')),
 				'min_contacts' => (int) ($query['min_contacts'] ?? 0),
-			] + \App\Ubr\Infrastructure\Repositories\LeadFilters::fromQuery($query),
+			] + \App\Ubr\Infrastructure\Repositories\LeadFilters::fromQuery($query) + \App\Ubr\Infrastructure\Repositories\CallFilters::fromQuery($query) + ['user_id' => $ctx->userId],
 			sanitize_key((string) ($query['sort'] ?? 'created_at')),
 			sanitize_key((string) ($query['dir'] ?? 'desc')),
 			$page,
@@ -109,7 +110,7 @@ class ProspectService
 		}
 
 		return [
-			'items' => app(ContactResearchService::class)->applyOrganizationView($ctx, array_map(fn ($r) => CompanyPresenter::row($r), $data['items'])),
+			'items' => app(CallPresenter::class)->attach($ctx, app(ContactResearchService::class)->applyOrganizationView($ctx, array_map(fn ($r) => CompanyPresenter::row($r), $data['items'])), $data['items']),
 			'total' => $data['total'],
 			'page' => $page,
 			'per_page' => $perPage,

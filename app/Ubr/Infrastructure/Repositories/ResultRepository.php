@@ -181,6 +181,9 @@ class ResultRepository
 		// Filtry Lead Intelligence (ocena organizacji; LEFT JOIN — firmy bez oceny nie znikają, gdy filtr nie jest ustawiony).
 		$where .= LeadFilters::where($extra, $args);
 
+		// Cold Calling: telefony, gotowość, opiekun, wielkość, ostatni kontakt (całe wyniki, nie bieżąca strona).
+		$where .= CallFilters::where($extra, $args, 'r.organization_id', (int) ($extra['user_id'] ?? 0));
+
 		$where .= match ($filter) {
 			'with_domain' => ' AND c.domain IS NOT NULL',
 			'relevant' => ' AND r.relevance_score >= 60',
@@ -220,6 +223,12 @@ class ResultRepository
 
 	private function orderBy(string $sort): string
 	{
+		$call = CallFilters::order($sort, 'r.organization_id', 'COALESCE(li.lead_score, -1) DESC, r.id ASC');
+
+		if ($call !== null) {
+			return $call;
+		}
+
 		$lead = LeadFilters::order($sort, 'COALESCE(r.relevance_score, -1) DESC, r.id ASC');
 
 		if ($lead !== null) {

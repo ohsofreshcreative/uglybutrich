@@ -137,6 +137,21 @@
 	}
 }
 
+/* Cold Calling (Prompt 10): gęsta tabela Discover / Prospects (table-fixed) — nagłówki i etykiety zawijają się w kolumnie. */
+@utility ubr-call-table {
+	& th {
+	@apply px-2.5 whitespace-normal leading-tight tracking-normal;
+	}
+
+	& td {
+	@apply px-2.5;
+	}
+
+	& td [class*='ubr-badge'] {
+	@apply whitespace-normal max-w-full;
+	}
+}
+
 @utility ubr-nav-link {
 	@apply flex items-center gap-3 rounded-[10px] px-3 h-10 text-[14px] font-semibold text-white/65 transition hover:text-white hover:bg-white/5;
 

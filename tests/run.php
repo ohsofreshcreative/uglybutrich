@@ -1497,6 +1497,15 @@ try {
 	/* AUDYT QA (Prompt 7) — regresje wykrytych błędów (po Action Center: korzysta z organizacji testowej C). */
 	require __DIR__ . '/qa-p7.php';
 
+	/* COLD CALLING WORKSPACE (Prompt 10) — telefony, Apollo (mock), opiekun, gotowość, listy, Action Center. */
+	require __DIR__ . '/calling-p10.php';
+
+	/* DIRECT DECISION MAKER PHONES (Prompt 10.2) — dowód powiązania numer ↔ osoba, decyzje, filtry, Apollo (mock). */
+	require __DIR__ . '/dm-phones-p102.php';
+
+	/* APOLLO CONTACT MATCHING & PHONE UNLOCK (Prompt 10.3) — dopasowanie, decyzje, blokada płatnego pobierania (mocki). */
+	require __DIR__ . '/apollo-matching-p103.php';
+
 	/* ------------------------------------------------------------------ */
 	UbrT::group('Kolejka — wykrywanie zablokowanych zadań');
 
@@ -1548,7 +1557,7 @@ try {
 	}
 
 	foreach ((array) _get_cron_array() as $ts => $hooks) {
-		foreach (['ubr_discovery_tick', 'ubr_verification_tick', 'ubr_analysis_tick', 'ubr_contacts_tick', 'ubr_clickup_tick', 'ubr_lead_tick'] as $hook) {
+		foreach (['ubr_discovery_tick', 'ubr_verification_tick', 'ubr_analysis_tick', 'ubr_contacts_tick', 'ubr_clickup_tick', 'ubr_lead_tick', 'ubr_phones_tick'] as $hook) {
 			foreach ((array) ($hooks[$hook] ?? []) as $event) {
 				wp_unschedule_event($ts, $hook, $event['args']);
 			}

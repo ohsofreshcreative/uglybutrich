@@ -677,3 +677,184 @@ Bez nowych modułów i bez migracji (schemat v9). Pełna lista błędów i wynik
 - Formularze: `isoFromLocalInput()` wysyła `datetime-local` jako ISO z offsetem przeglądarki (serwer: `PipelineService::parseDate`).
 - Adresy ogólne/działów (`PeopleExtractor::GENERIC_LOCALS`, `isGenericEmail`) nie są e-mailami osób; dopasowanie nazwiska jako podciągu od 3 liter.
 - NIP/REGON z powtórzeń jednej cyfry / samych zer odrzucane przez `CompanyNormalizer`.
+
+## 17. Decision Maker Finder 2.0 + Phone Intelligence + Cold Calling Workspace (Prompt 10)
+
+Migracja **M010** (schemat v10, tylko nowe tabele / kolumny / indeksy, bez usuwania i nadpisywania danych). Scoringi (Lead Potential, Opportunity, Contact Priority) bez zmian — telefony nie są danymi wejściowymi Lead Intelligence (test: hash `snapshot()` przed i po dodaniu numerów).
+
+### Dane
+| Tabela / kolumna | Zakres | Uwagi |
+|---|---|---|
+| `ubr_company_phones` | `org_key = 0` — numery z oficjalnej strony (wspólne); `org_key = <org>` — numery ręczne i centrala z Apollo (prywatne organizacji) | UNIQUE (firma, org_key, e164); źródło (TEL_LINK / SCHEMA / TEXT / MANUAL), URL, strona (home / contact / footer), kontekst, oddział, pewność, daty `found_at` / `last_seen_at`, `is_primary` |
+| `ubr_companies.main_phone_*`, `phones_count`, `phones_checked_at` | denormalizacja numeru głównego ze strony | listy i filtry bez N+1 |
+| `ubr_contacts.phone_e164` | znormalizowany `public_business_phone` | odróżnienie numeru osoby od numeru firmy |
+| `ubr_contacts.external_provider` / `external_id` | np. identyfikator osoby w Apollo | dowód powiązania, podstawa odblokowania telefonu |
+| `ubr_phone_reveals` | zlecenia „Odblokuj telefon” per organizacja | UNIQUE `idempotency_key` = `org:osoba:N`, stan (reserved / pending / completed / unavailable / error), `request_id`, próby, `credits_consumed` (z odpowiedzi Apollo, gdy podany) |
+| `ubr_contact_phones` | numery osób pobrane przez organizację | prywatne dla organizacji, typ MOBILE / DIRECT / OTHER |
+| `ubr_organization_prospects.do_not_contact*` | zakaz kontaktu (powód, kto, kiedy) | niezależny od etapu pipeline |
+| `ubr_organization_prospects.last_contact_at` / `last_contact_outcome` | ostatni ŚWIADOMIE zapisany kontakt | z istniejących aktywności (backfill w M010), bez nowej historii |
+| `ubr_prospect_activities.outcome` | wynik rozmowy dla aktywności „Telefon” | Nie odebrał / Oddzwonić później / Nie zainteresowany / Zainteresowany / Umówiono spotkanie / Błędny numer |
+
+### Telefony firmy
+- `PhoneNumber::parse()` — E.164 (domyślnie PL): `+48`, `0048`, stary zapis z zerem, `tel:`, numery wewnętrzne (`wew.`, `ext.`, `;ext=`), numery zagraniczne z kodem kraju. Odrzuca NIP, REGON, KRS, kody pocztowe, rachunki, kody produktów i nieistniejące prefiksy PL (whitelista stref, infolinie tylko 800/801/804).
+- `CompanyPhoneExtractor::extract(html, url, pageKind)` — linki `tel:` / `callto:` (wysoka pewność), Schema.org (`telephone`, `ContactPoint.contactType`, oddziały z `department` / `subOrganization` / `location`), `itemprop=telephone`, tekst tylko po słowie „tel./telefon/phone…” (bez kontekstu fax / NIP / REGON / KRS / konto). Deduplikacja po E.164 + numer wewnętrzny, typ MAIN / BRANCH / SALES / SUPPORT / OTHER / UNKNOWN, znacznik stopki.
+- `PhonePicker::primary()` — numer główny: centrala > strona Kontakt > stopka > pozostałe; oddział i numer zagraniczny nigdy jako główny polskiej firmy; numer niewidziany 180 dni na końcu.
+- Źródła: dokumenty pobrane przez Website Analyzer (strona główna + Kontakt) i Decision Maker Findera — **bez ponownej analizy i bez dodatkowego crawla**. Ręczne odświeżenie: `POST /companies/{id}/phones/refresh` (strona główna + Kontakt przez `PageFetcher` z ochroną SSRF i przypięciem IP, timeout 10 s, blokada 10 min na firmę, pominięcie domeny innego podmiotu).
+- Uzupełnienie dla firm sprzed etapu 10 (analizy nie przechowują HTML): `wp ubr phones-backfill --org=<slug> [--limit=n] [--execute]` — kandydaci z domeną i `phones_checked_at IS NULL`, `CompanyPhoneService::refresh` z przerwą 1 s; domyślnie bez pobierania.
+- Klasyfikacja z etykiety (backfill LocalWP, 11.10.2026): typ z tekstu tuż przed numerem — treść linku `tel:` → etykieta z tego samego akapitu → tekst poprzednich węzłów (bez `script` / `style`, ucięty na poprzednim pełnym numerze ≥ 9 cyfr). Kolejność: oddział (etykieta / blok oddziału / węzeł JSON-LD) → etykieta strony → podpowiedź JSON-LD (`contactType`) → kontekst (bez wnioskowania „oddziału” z sąsiedniego bloku). Słowa: `MAIN_WORD` (centrala, recepcja, sekretariat, siedziba, headquarter…), `PERSON_ROLE` / imię i nazwisko i `DEPARTMENT` (kadry, magazyn, zakupy…) → OTHER („Dział / osoba”).
+- Spółki: nazwa z formą prawną w etykiecie (`entityIn`) różna od firmy → BRANCH z `branch_label = "inna spółka: …"`; ta sama spółka → MAIN. Tekst linku ≠ numer w `tel:` → pewność `low` + „[tekst linku: …]”.
+- `PhonePicker`: MAIN 100 · UNKNOWN 40 (komórka −15) · SALES 35 · SUPPORT 20 · OTHER 10 · BRANCH 5, `low` −20; wyklucza „inna spółka” i numery zagraniczne (kraj z numeru albo — gdy nieznany — prefiks inny niż +48); remis → kolejność na stronie (id).
+- `CompanyPhoneService::refresh`: robots.txt (`RobotsPolicy`), `<base href>` (`baseHref`), nazwa firmy do ekstraktora, maks. 1 dodatkowa podstrona, gdy Kontakt nie ma numerów (najpierw „Polska / Poland / centrala / siedziba”, potem „biuro / office / contact-…”), `CompanyPhoneRepository::replaceExtracted` (numery ze stron pobranych teraz zastępują wcześniejsze z tych samych adresów; ręczne bez zmian; upsert nie obniża typu poza UNKNOWN → konkretny).
+- Action Center: `call.main_phone` = `{number, e164, tel}`; wiersz kolejki pokazuje numer z `tel:` i kopiowaniem (`partials/ac-call-phone`), bez numeru przy zakazie kontaktu.
+- Kolumna `manual` jest słowem zastrzeżonym w MySQL 8 — w SQL zawsze `` `manual` ``.
+- Numer ręczny organizacji: prywatny, nigdy nie nadpisywany ekstrakcją; ręczny numer MAIN ma pierwszeństwo dla tej organizacji (`CompanyPhoneService::mainFor`).
+
+### Apollo
+- **People API Search** (`ApolloPeopleSource`, 0 kredytów wg dokumentacji, może wymagać klucza master; nie zwraca e-maili ani telefonów): stanowiska EN + PL (`TITLES`) z `include_similar_titles`, filtr domeny; osoba przyjmowana tylko przy zgodnej domenie lub identyfikatorze organizacji Apollo — podobna nazwa firmy nie wystarcza; zamaskowane nazwisko = brak kontaktu; rola przez `RoleCatalog` (produkcja / serwis / IT / magazyn nie są decydentami). Zapisywany `external_id`. Włączenie: `UBR_APOLLO_PEOPLE_ENABLED` (bez zmian). Działanie z prawdziwym kluczem: **NOT VERIFIED**.
+- **Phone Enrichment** (`ApolloPhoneService`, płatne, tylko na żądanie): `POST /people/match?id=…&reveal_phone_number=true&poll_only=true&reveal_personal_emails=false` → `request_id`; wynik odbiera `ApolloPhoneRunner` (`GET /webhook_result/{request_id}`, 0 kredytów; `result_pending` + `retry_after_seconds`; maks. 40 prób; worker `phones`, cron `ubr_phones_tick`, healthcheck, `wp ubr queue-work --all`). Webhook nie jest używany (LocalWP / hosting bez publicznego HTTPS dla Apollo).
+- Kontrola kosztów: flaga `UBR_APOLLO_PHONE_ENABLED` (domyślnie wyłączone) + filtr `ubr/apollo/phone_enabled`, uprawnienie `contacts.reveal` (owner / admin), osoba z identyfikatorem Apollo, brak już pobranego numeru (ponownie tylko trybem `refresh`), dzienny limit organizacji `UBR_APOLLO_PHONE_DAILY_LIMIT` (domyślnie 20), token potwierdzenia HMAC (10 min, związany z użytkownikiem, organizacją, osobą i trybem) + osobne potwierdzenie nieznanego kosztu, idempotencja (UNIQUE klucz; podwójne kliknięcie zwraca to samo zlecenie). Koszt w UI: „nieznany” (bez liczby kredytów); `credits_consumed` zapisywany z odpowiedzi.
+- Bez automatycznego ponawiania płatnego zapytania: błąd HTTP → ERROR; zlecenie przerwane między rezerwacją a odpowiedzią (> 10 min w `reserved`) → ERROR z prośbą o sprawdzenie w Apollo.
+- Statusy telefonu osoby: AVAILABLE (tylko z prawdziwym numerem), UNAVAILABLE (Apollo nie zwróciło numeru), UNKNOWN (nie sprawdzano / w trakcie), ERROR. **LOCKED nie jest przypisywany** — obecne API nie potwierdza go bez zapytania.
+- Wynik: numery osoby tylko dla identyfikatora, dla którego zlecono (inne osoby z odpowiedzi pomijane); numer centrali (`work_hq`) → numer firmy organizacji, nie osoby; e-maile z odpowiedzi nie są zapisywane.
+- Bezpieczny test ręczny: `wp ubr apollo-phone-test --org=<slug> --contact=<id> [--user=<id>]` — domyślnie tylko sprawdzenie warunków (bez zapytania); zapytanie płatne dopiero z `--execute --yes`; `--poll` odbiera wyniki (0 kredytów).
+
+### Cold Call Readiness
+`CallReadiness::classify()` (PHP) = `CallFilters::readiness()` (SQL), pierwsza pasująca reguła: **BLOCKED** (hard blocker Lead Intelligence, zakaz kontaktu, status / kwalifikacja „nie pasuje”) → **READY_DIRECT** (decydent z bezpośrednim numerem: numer osoby inny niż numery firmy i bez odrzucenia w organizacji, albo numer pobrany przez organizację) → **CALL_COMPANY** (numer firmy ze strony lub ręczny) → **RESEARCH** (brak numeru, firma / domena niepotwierdzona) → **FIND_PHONE**. Role decydentów: `CallReadiness::DECISION_ROLES`. Odrębna od scoringów; brak decydenta nie blokuje cold calla, gdy jest numer firmy.
+
+### Company Ownership
+- Statusy łączą się: `UNASSIGNED` / `MINE` / `ASSIGNED_OTHER` + flagi `IN_PROGRESS` (etapy rozmowy) i `DO_NOT_CONTACT`.
+- `OwnershipService::claim()` — atomowo: `INSERT IGNORE` prospektu (UNIQUE organizacja + firma) i warunkowy `UPDATE … SET owner = ja WHERE owner IS NULL` (zarchiwizowany prospekt najpierw traci opiekuna). Z dwóch równoczesnych przejęć wygrywa jedno; drugie dostaje 409 `ubr_assigned_other` z nazwą opiekuna. Moja firma → bez duplikatu. Firma z zakazem kontaktu → 409.
+- Przekazanie: `POST /prospects/{id}/transfer` = `PipelineService::update(owner)`; zmiana CUDZEGO opiekuna wymaga `prospects.transfer` (owner / admin). „Zapisz do Prospects” przypisuje dodającego tylko, gdy nikt nie przejął firmy w międzyczasie (`assignIfFree`).
+- Wynik rozmowy (`POST /companies/{id}/call-outcome`): odrzucany przy BLOCKED i firmie innego opiekuna; wolna firma → przypisana do dzwoniącego; aktywność „Telefon” z wynikiem w istniejącej historii; etap tylko do przodu (Nowy / Zakwalifikowany / Do kontaktu → Skontaktowano; „Oddzwonić później” → Ponowienie; „Umówiono spotkanie” → W rozmowach; bez automatycznego „Utracony”). Kliknięcie `tel:` niczego nie zapisuje.
+
+### Listy (Discover, Prospects)
+- `CallFilters::select()` dodaje do zapytań list gotowość, osobę z numerem i pola prospektu; `CallPresenter::attach()` ładuje zbiorczo dla strony: osoby, numery firmy, numery pobrane, ostatnie zlecenia, opiekunów → `item.call` (readiness, size, decision_maker + stan telefonu, company_phone, ownership, actions). Akcje kontaktowe niedostępne przy DNC / BLOCKED / cudzym opiekunie (także po stronie serwera).
+- Filtry na całym zbiorze (WHERE): telefon (do decydenta / firmy / jakikolwiek / brak), gotowość, opiekun (wolne / moje / innych / z kontaktem / DNC), wielkość (pasma 1–10 … 1000+, „brak danych”), ostatni kontakt (7 / 30 / 90 dni / nigdy), etap pipeline, analiza, branża i lokalizacja (LIKE z escapowaniem), widok „Wolne firmy z telefonem”. Sortowanie: gotowość, wielkość, ostatni kontakt, ostatnia analiza, nazwa A–Z (+ istniejące).
+- UI: wspólne partiale `partials/call/*` (komórki, karta mobilna, szybkie akcje, filtry, okna „Wynik rozmowy” i „Odblokuj telefon”), store `resources/js/ubr/calling.js`. Tabela ≥ 1280 px (`table-fixed`, bez przewijania poziomego — także Prospects, wcześniej `min-w-[2170px]`), poniżej 1280 px karty. Menu ⋯ (`row-actions`) jest częścią szybkich akcji.
+
+### Action Center
+- Kolejka `ready_to_call` („Gotowe do telefonu”): READY_DIRECT / CALL_COMPANY, poza statusami zamkniętymi, bez firm innego opiekuna (`viewer_id` w widoku bazowym). Nie jest nowym KPI.
+- Zakaz kontaktu wykluczony w `ActionPriorityEngine::classify()` i `sqlType()`; „Today's Priorities” i liczniki działań pomijają firmy innych opiekunów (follow-upy przypisane do mnie zostają). Klucz cache podsumowania zawiera użytkownika.
+
+### API (nowe)
+`GET/POST /companies/{id}/phones`, `POST /companies/{id}/phones/refresh`, `DELETE /companies/{id}/phones/{phone_id}`, `GET/POST /contacts/{id}/phone-reveal`, `POST /companies/{id}/claim`, `POST /companies/{id}/call-outcome`, `POST /prospects/{id}/transfer`, `POST /prospects/{id}/do-not-contact`. Sales payload: `do_not_contact*`, `last_contact_*`, `call_outcomes`, `can_transfer`, `activities[].outcome`.
+
+## 18. Direct Decision Maker Phones (Prompt 10.2)
+
+Cel: bezpośredni służbowy numer właściwego decydenta z dowodem powiązania numeru z osobą — bez zgadywania, bez Apollo.
+
+### Dane (M011, schemat v11)
+- `ubr_contact_phone_links` — powiązanie numer ↔ osoba: `contact_id`, `company_id`, `org_key` (0 = automat ze strony, wspólne;
+  organizacja = decyzja organizacji), `e164`, `company_phone_id`, `link_status` (VERIFIED / LIKELY / UNCERTAIN / REJECTED),
+  `evidence` (SAME_BLOCK, TABLE_ROW, PERSON_PAGE, FOOTER_BLOCK, SAME_BLOCK_NO_TITLE, SEQUENCE, NEARBY, MANY_NUMBERS, ALSO_ELSEWHERE, COMPANY_BLOCK,
+  GENERAL_NUMBER, BRANCH_NUMBER, FOOTER_NUMBER, DEPARTMENT_LABEL, SHARED_NUMBER, MANUAL_CONFIRM / REJECT / ASSIGN, LEGACY_BLOCK),
+  `source_type` (WEBSITE / MANUAL), `source_url`, `evidence_excerpt`, `observed_name`, `observed_title`, `found_at`, `last_seen_at`,
+  `verified_at`, `verified_by`. UNIQUE (contact, org_key, e164) — idempotentnie.
+- `ubr_company_phones.owner_class` (PERSON_DIRECT / DEPARTMENT / COMPANY_GENERAL / BRANCH / UNCERTAIN) + `owner_note` + `owner_checked_at`.
+- Migracja: istniejące `contacts.phone_e164` → LIKELY (`LEGACY_BLOCK`) albo VERIFIED (`MANUAL_ASSIGN` dla osób dodanych ręcznie).
+
+### Ekstrakcja (`Domain\Phones\PersonPhoneExtractor`)
+- Wejście: HTML już pobranej strony + numery ogólne / oddziałów firmy. Numery: linki `tel:` i tekst tylko po „tel./kom./telefon…”
+  albo z prefiksem +48 / 0048 (bez NIP / REGON / KRS / faksu — `CompanyPhoneExtractor::notPhoneBefore`). Osoby: `PeopleExtractor::classify`
+  (imię i nazwisko, stanowisko w tej samej linii lub po separatorze „·”, „|”, „–”); stanowisko spoza katalogu ról
+  (`genericTitle`: kierownik, manager, specjalista…) liczy się jako dowód struktury bloku, ale nie jako rola decydenta.
+  Tekst przez `mb_scrub` (strony w innym kodowaniu). Blok osoby w stopce / nagłówku: maks. LIKELY (`FOOTER_BLOCK`).
+- Blok: najmniejszy przodek numeru (maks. 6 poziomów, ≤ 600 znaków) zawierający osobę; jedna osoba + stanowisko = VERIFIED (wiersz
+  tabeli = TABLE_ROW), bez stanowiska = LIKELY; > 3 możliwe numery osoby = UNCERTAIN; blok z adresem / NIP / formą prawną = UNCERTAIN;
+  duży blok albo numer przed nazwiskiem = o poziom niżej. Kilka osób w bloku → lista płaska (najbliższa osoba przed numerem, ≤ 6 linii):
+  ze stanowiskiem LIKELY, bez — UNCERTAIN. Indywidualna podstrona osoby (jedna osoba, nazwisko w adresie) = PERSON_PAGE.
+- Odrzucenia: numer ogólny / oddziału, numer ze stopki / nagłówka / nawigacji, etykieta przy numerze „centrala / sekretariat / dział …”
+  (bez stanowiska samej osoby), ten sam numer przy kilku osobach; ten sam numer w innym miejscu strony → UNCERTAIN (ALSO_ELSEWHERE).
+- Wynik: osoby (z tytułem, rolą, liczbą wystąpień na stronie) z numerami oraz właściciel każdego numeru na stronie.
+
+### Usługa (`Services\DecisionPhoneService`)
+- `scan()` (REST `POST /companies/{id}/decision-phones/scan`, `dry_run`; CLI `wp ubr decision-phones`): pobiera strony źródłowe
+  zapisanych numerów (maks. 3, najpierw te z numerami „dział / osoba”) + maks. 2 podlinkowane podstrony zarząd / zespół / media
+  (`ContactPageCrawler::candidates`), robots.txt, `PageFetcher` (SSRF), blokada 10 min na firmę, limit dzienny organizacji
+  (`UBR_DM_PHONES_DAILY_LIMIT`, domyślnie 80). Bez Apollo i bez Website Analyzera.
+- `process()`: dopasowanie do kontaktów firmy po kluczu imienia i nazwiska (także z `full_name`); nowa osoba tylko z rolą decydenta
+  przez `DecisionMakerFinderService::persistWebsiteCandidate()` (bez telefonu w ocenie); wariant nazwiska różniący się o ≤ 2 znaki przy
+  tym samym imieniu = możliwy duplikat (bez łączenia i bez nowego kontaktu; najpierw pisownia częściej występująca na stronie);
+  różne stanowisko z innego działu → VERIFIED obniżone do LIKELY. Adresy e-mail z fragmentów stron są usuwane (`redact` → „[e-mail]”).
+  `fromDocuments()` — te same reguły dla stron pobranych przez Decision Maker Findera (bez tworzenia osób).
+- Decyzje organizacji: `decide()` (confirm / reject / assign istniejącego numeru firmy), `remove()` (decyzja organizacji → usunięta;
+  automat → odrzucony dla organizacji). Numer firmy nigdy nie jest usuwany. REST `GET/POST /contacts/{id}/phone-links`, `DELETE …/{link_id}`.
+
+### Gotowość i listy
+- `CallFilters::link($org, $statuses, $source)` — efektywny status dla organizacji (decyzja wygrywa z automatem), osoba z rolą decydenta.
+- READY_DIRECT = `link(VERIFIED)` lub numer z Apollo (`CallFilters::apollo`, bez numerów odrzuconych przez organizację);
+  RESEARCH także gdy jest tylko numer LIKELY (bez numeru firmy). PHP: `CallReadiness::classify(['likely_phone' => …])`.
+- Filtry (`phone`): direct (potwierdzony lub prawdopodobny), dm_verified, dm_review, company_only, no_dm, company, any, none;
+  `phone_source` (website / manual / apollo); `dm_role` (role decydenta).
+- Listy: `ApolloPhoneService::state()` przyjmuje powiązania (VERIFIED / LIKELY z etykietą i źródłem) + numery Apollo; UNCERTAIN tylko
+  jako liczba „do weryfikacji”; „Brak numeru decydenta”. Karta firmy: sekcja „Telefon decydenta” (status, źródło, dowód, daty,
+  Potwierdź / Odrzuć / Usuń powiązanie / Przypisz istniejący numer) i „Szukaj telefonów decydentów”.
+- Action Center: `ready_to_call` z filtrem `call_kind` (direct / company), `breakdown` (liczby obu ścieżek) i potwierdzonym numerem
+  decydenta w wierszu. KPI bez zmian.
+
+### Apollo
+- People API Search (`/mixed_people/api_search`): wg dokumentacji 0 kredytów, bez e-maili i telefonów, dostęp kluczem z uprawnieniem
+  do endpointu lub kluczem master. Funkcja nadal wyłączona (`UBR_APOLLO_PEOPLE_ENABLED`); kontrolowany test
+  `POST /integrations/apollo/people-test` (owner / admin, potwierdzenie, 1 / h, bez zapisu, zapis w dzienniku jako niepłatny).
+- Phone Enrichment bez zmian (Prompt 10): wyłączony, tylko świadome odblokowanie; numer z Apollo traktowany jako potwierdzony
+  (identyfikator osoby), chyba że organizacja go odrzuci.
+
+## 19. Apollo Contact Matching & Phone Unlock (Prompt 10.3)
+
+Cel: powiązać osoby z Apollo People API Search z kontaktami firmy (bez zgadywania nazwisk) i przygotować kontrolowane, płatne
+odblokowanie numeru decydenta — w tym etapie zablokowane po stronie serwera.
+
+### Dane (M012, schemat v12)
+- `ubr_apollo_people` — kandydaci z People API Search przy firmie (wspólni, jak kontakty automatyczne): `apollo_person_id`,
+  `apollo_org_id`, `first_name`, `last_name` (TYLKO gdy Apollo podało pełne), `last_name_obfuscated`, `title`, `normalized_role`,
+  `org_domain`, `belongs_to_company`, `phone_signal` (surowe `has_direct_phone`), `phone_availability` (AVAILABLE / UNKNOWN /
+  UNAVAILABLE; LOCKED nieużywany), `has_email_signal`, `apollo_refreshed_at`, `found_at`, `last_seen_at`. UNIQUE (firma, osoba Apollo).
+  Bez e-maili i numerów.
+- `ubr_apollo_matches` — dopasowanie kandydat ↔ kontakt PRYWATNE dla organizacji: `match_level` (EXACT / STRONG / POSSIBLE / NO_MATCH /
+  CONFLICT), `match_status` (SUGGESTED / APPROVED / REJECTED / DETACHED / OBSOLETE), `match_source` (PEOPLE_SEARCH / MANUAL), `evidence`
+  (JSON), `matched_at`, `decided_by`, `decided_at`, `last_verified_at`. `contact_id = 0` = brak kontaktu. UNIQUE (organizacja, kandydat, kontakt).
+- `ubr_apollo_match_history` — każda zmiana (suggest, auto_approve, approve, reject, detach, manual_link, recheck, rematch, level_change,
+  obsolete): z jakiego statusu, na jaki, poziom, kontakt, użytkownik, notatka (bez HTML).
+- `ubr_phone_reveals.apollo_person_id` — identyfikator osoby, dla którego wysłano zlecenie (wynik przypisywany tylko tej osobie).
+- Identyfikator Apollo kontaktu w organizacji = dopasowanie APPROVED (`ApolloContactService::apolloIdFor`), a bez niego
+  `contacts.external_id` (provider apollo), o ile organizacja go nie odrzuciła / nie odłączyła. Kontakty wspólne nie są modyfikowane.
+
+### Dopasowanie (`Domain\Contacts\ApolloMatcher`, czysta logika)
+- Osoba spoza firmy (inna domena / organizacja Apollo — `ApolloPeopleSource::belongsToCompany`) → CONFLICT, bez kontaktu.
+- Ten sam identyfikator Apollo przy kontakcie → EXACT.
+- Imię musi być zgodne (`PersonName::fold`, bez polskich znaków). Pełne nazwisko z Apollo równe → EXACT (STRONG przy stanowisku z innego
+  obszaru); nazwisko zgodne z maską (`maskMatches`: początek + koniec, dłuższe od widocznych liter) → STRONG przy zgodnym obszarze
+  stanowiska, inaczej POSSIBLE. Maska NIGDY nie daje EXACT. Sprzeczne nazwisko → brak dopasowania.
+- Kontakt z innym identyfikatorem Apollo albo identyfikator zatwierdzony w organizacji dla innego kontaktu → CONFLICT.
+- Kilka kontaktów pasujących do jednego kandydata (np. Nowak / Nowaczek do „No***k”) → wszystkie POSSIBLE.
+
+### Serwis (`Services\ApolloContactService`)
+- `search(ctx, firma, confirm)` — `contacts.run`; domena firmy ustalona i nie „mismatch”; najpierw pamięć podręczna (transient 1 dzień,
+  ten sam adres co test kontrolny, `per_page=10`); zapytanie sieciowe tylko gdy `UBR_APOLLO_PEOPLE_ENABLED` + klucz + `confirm`;
+  24 h przerwy na firmę, dzienny limit organizacji (`UBR_APOLLO_PEOPLE_DAILY_LIMIT`, domyślnie 20), atomowa blokada równoległych zapytań
+  (`add_option`), błędy 401/403/422/429/sieć bez ponawiania. Zapis kandydatów → `rematch`.
+- `rematch(org, firma)` — bez zapytań do Apollo; EXACT zatwierdzane automatycznie (historia `auto_approve`), STRONG / POSSIBLE jako
+  propozycje; decyzje użytkownika (APPROVED / REJECTED / DETACHED) bez zmian (aktualizowany tylko poziom + wpis `level_change`);
+  propozycje, których dopasowanie już nie zwraca → OBSOLETE (nie usuwane).
+- `decide(approve | reject | detach | recheck | link)` — `contacts.manage`; NO_MATCH / CONFLICT nie do zatwierdzenia (422); konflikt
+  identyfikatorów → 409; ręczne połączenie tylko, gdy imię i nazwisko kontaktu nie przeczą danym Apollo.
+- `candidates()` — tylko odczyt; identyfikatory Apollo nie są wysyłane do przeglądarki. `approvedFor()` — jedno zapytanie dla listy.
+- REST: `GET /companies/{id}/apollo-candidates` (contacts.view), `POST /companies/{id}/apollo-candidates/search` (contacts.run, `confirm`),
+  `POST /apollo-matches/{id}` (contacts.manage, `action`), `POST /apollo-candidates/{id}/link` (contacts.manage, `contact_id`),
+  `GET /apollo-matches/{id}/history` (contacts.view). Firma sprawdzana `isVisibleTo`, dopasowanie — `organization_id` (IDOR).
+
+### Phone Unlock (`ApolloPhoneService`)
+- Preflight: wyłączone (`UBR_APOLLO_PHONE_ENABLED`, domyślnie brak), `contacts.reveal`, zatwierdzony identyfikator Apollo, „Nie kontaktować”
+  (prospekt organizacji), potwierdzony numer już zapisany, trwające zlecenie, numer już pobrany, dzienny limit. Koszt: `known=false`,
+  etykieta „Koszt wymaga potwierdzenia”, stawki z dokumentacji (1–9 kredytów) jako informacja z dokumentacji.
+- Obrona w głąb: `request()` sprawdza ponownie `enabled()` i identyfikator — bez nich nic nie jest wysyłane. Token HMAC (10 min),
+  osobne potwierdzenie kosztu, idempotentna rezerwacja (podwójne kliknięcie = to samo zlecenie).
+- Wynik przypisywany wyłącznie osobie z identyfikatora zapisanego w zleceniu (inne osoby z odpowiedzi pomijane).
+
+### Interfejs
+- Karta firmy → Decision Makers → „Decydenci w Apollo”: zgoda + „Szukaj decydentów w Apollo”, kandydaci (maska, stanowisko, poziom,
+  status, kontakt, dostępność telefonu, data sprawdzenia), akcje: Zatwierdź, Odrzuć dopasowanie, Odłącz, Sprawdź ponownie, Połącz z kontaktem,
+  Zobacz szczegóły (dowody, historia decyzji), Sprawdź możliwość odblokowania telefonu (modal z powodami blokady).
+- Karta kontaktu: wiersz „Apollo” przy zatwierdzonym dopasowaniu. Discover / Prospects: sygnał Apollo pod decydentem
+  („Apollo: numer bezpośredni dostępny (płatny, nie pobrano)” / „Dostępność telefonu nieznana”) i „Sprawdź Apollo” (karta firmy, odczyt z bazy).
+- Gotowość bez zmian: identyfikator Apollo ani sygnał dostępności bez numeru nie dają READY_DIRECT.

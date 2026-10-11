@@ -63,6 +63,7 @@ class UbrServiceProvider extends ServiceProvider
 		add_action(\App\Ubr\Services\ContactResearchRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(\App\Ubr\Services\ContactResearchRunner::class)->tick()));
 		add_action(\App\Ubr\Services\ClickUpRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(\App\Ubr\Services\ClickUpRunner::class)->tick()));
 		add_action(\App\Ubr\Services\LeadIntelligenceRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(\App\Ubr\Services\LeadIntelligenceRunner::class)->tick()));
+		add_action(\App\Ubr\Services\ApolloPhoneRunner::CRON_HOOK, fn () => $this->safely(fn () => $this->app->make(\App\Ubr\Services\ApolloPhoneRunner::class)->tick()));
 		// Zmiana danych firmy → ocena Lead Intelligence do przeliczenia (tylko zapisane dane; worker w tle).
 		add_action('ubr/company/changed', function ($companyId, $reason = '', $organizationId = null) {
 			$this->safely(function () use ($companyId, $reason, $organizationId) {
@@ -96,6 +97,8 @@ class UbrServiceProvider extends ServiceProvider
 			$this->safely(fn () => $this->app->make(\App\Ubr\Services\ClickUpRunner::class)->kick());
 			// Lead Intelligence: przeliczenie zaległych ocen.
 			$this->safely(fn () => $this->app->make(\App\Ubr\Services\LeadIntelligenceRunner::class)->kick());
+			// Odblokowane telefony (Apollo): odbiór wyników zatwierdzonych zleceń (bez nowych zapytań płatnych).
+			$this->safely(fn () => $this->app->make(\App\Ubr\Services\ApolloPhoneRunner::class)->kick());
 		});
 
 		// Po migracji 1.2: trafność dla istniejących wyników (bez zapytań zewnętrznych).

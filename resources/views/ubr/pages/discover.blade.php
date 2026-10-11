@@ -305,15 +305,23 @@
 							</details>
 							<select class="ubr-input h-8 text-[12px] w-auto" x-model="resultSort" @change="loadResults(1)" aria-label="Sortowanie">
 								<option value="relevance">Sortuj: trafność</option>
+								<option value="readiness">Sortuj: gotowość do telefonu</option>
+								<option value="size">Sortuj: wielkość firmy</option>
+								<option value="last_contact">Sortuj: ostatni kontakt</option>
+								<option value="last_analysis">Sortuj: ostatnia analiza</option>
+								<option value="name">Sortuj: nazwa A–Z</option>
 								<option value="rank">Sortuj: Smart Ranking</option>
 								<option value="lead">Sortuj: Lead Potential</option>
 								<option value="redesign">Sortuj: Redesign Opportunity</option>
 								<option value="opportunity">Sortuj: Opportunity Score</option>
 								<option value="contact_priority">Sortuj: Contact Priority</option>
 								<option value="position">Sortuj: kolejność źródła</option>
-								<option value="name">Sortuj: nazwa</option>
 							</select>
 						</div>
+				</div>
+				{{-- Cold Calling: telefony, gotowość, opiekun, wielkość, CRM (Prompt 10) --}}
+				<div class="mt-2 pt-2 border-t border-line flex flex-wrap items-center gap-2" aria-label="Filtry Cold Calling">
+					@include('ubr.partials.call.filters', ['model' => 'callFilters', 'reload' => 'loadResults(1)'])
 				</div>
 			</section>
 		</template>
@@ -339,84 +347,76 @@
 						<p class="py-12 text-center text-[13px] text-ink-muted" x-text="isActive ? 'Szukam… wyniki pojawią się tutaj.' : 'Brak wyników dla tych kryteriów.'"></p>
 					</template>
 
-				{{-- Desktop / laptop (≥ 1024 px): tabela dopasowana do szerokości --}}
-				<table class="ubr-table table-fixed hidden lg:table" x-show="results.items.length">
+				{{--
+					Cold Calling Workspace (Prompt 10): ≥ 1280 px tabela dopasowana do szerokości (table-fixed, zawijanie, bez przewijania
+					poziomego); poniżej 1280 px karty. Kolumny: Firma, Wielkość, Strona WWW, Ocena, Decydent, Telefony, Opiekun / CRM,
+					Status kontaktu, Akcje. Szczegóły ocen (Relevance, Opportunity, decydenci) — rozwijane pod wierszem.
+				--}}
+				<table class="ubr-table ubr-call-table table-fixed hidden xl:table" x-show="results.items.length">
 					<colgroup>
-						<col class="w-11">
+						{{-- Firma = reszta (≈ 21% − 40 px): wszystkie pozostałe kolumny procentowo, żeby przy 1280 px nazwa firmy miała ≥ 150 px. --}}
+						<col class="w-10">
 						<col>
-						<col class="w-[13%]">
-						<col class="w-[17%]">
-						<col class="w-[14%]">
-						<col class="w-[18%]">
-						<col class="w-16">
+						<col class="w-[7%]">
+						<col class="w-[9%]">
+						<col class="w-[9%]">
+						<col class="w-[12%]">
+						<col class="w-[12%]">
+						<col class="w-[10%]">
+						<col class="w-[9%]">
+						<col class="w-[11%]">
 					</colgroup>
 					<thead>
 						<tr>
 							<th class="!px-3"><input type="checkbox" class="ubr-checkbox" x-show="canAnalyze || canFindContacts" :checked="allSelected" @change="toggleAll()" aria-label="Zaznacz wszystkie firmy na stronie"></th>
-							<th>Firma</th><th>Weryfikacja</th><th>Domena</th><th>Lokalizacja</th><th>Oceny</th><th class="text-right"><span class="sr-only">Akcje</span></th>
+							<th>Firma</th><th>Wielkość</th><th>Strona WWW</th><th>Ocena</th><th>Decydent</th><th>Telefony</th><th>Opiekun / CRM</th><th>Status kontaktu</th><th class="text-right">Akcje</th>
 						</tr>
 					</thead>
 					<template x-for="c in results.items" :key="c.id">
 						<tbody x-data="{ more: false }">
 							<tr>
 								<td class="!px-3"><input type="checkbox" class="ubr-checkbox" x-show="canAnalyze || canFindContacts" :value="c.id" x-model.number="selected" :aria-label="'Zaznacz ' + c.name"></td>
-								<td class="min-w-0">@include('ubr.partials.discover-company-cell', ['var' => 'c'])</td>
-								<td class="text-[12px] min-w-0">
-									<span :class="$store.ubr.verificationBadge(c.verification.status)" x-text="c.verification.label"></span>
-									<div class="text-[11px] text-ink-muted mt-1 line-clamp-2 [overflow-wrap:anywhere]" x-show="c.verification.source" x-text="c.verification.source" :title="c.verification.source"></div>
+								<td class="min-w-0">
+									@include('ubr.partials.discover-company-cell', ['var' => 'c', 'hideSize' => true])
+									<div class="mt-1 flex flex-wrap items-center gap-1 text-[11px]">
+										<span class="!whitespace-normal" :class="$store.ubr.verificationBadge(c.verification.status)" x-text="c.verification.label" :title="c.verification.source || ''"></span>
+										<span class="text-ink-muted [overflow-wrap:anywhere]" x-text="[c.city, c.region].filter(Boolean).join(', ') || (c.location.match === 'filtered' ? filterLocationLabel : 'lokalizacja: brak danych')"></span>
+									</div>
 								</td>
-								<td class="text-[12px] min-w-0">@include('ubr.partials.discover-domain-cell', ['var' => 'c'])</td>
-								<td class="text-[12px] min-w-0">
-									<div class="[overflow-wrap:anywhere]" x-text="[c.city, c.region].filter(Boolean).join(', ') || (c.location.match === 'filtered' ? filterLocationLabel : 'brak danych')" :class="[c.city, c.region].filter(Boolean).length ? '' : 'text-ink-muted'"></div>
-									<div class="mt-1"><span class="!whitespace-normal" :class="$store.ubr.locationBadge(c.location.match || c.location.confidence)" x-text="$store.ubr.locationLabel(c.location.match || c.location.confidence)"></span></div>
-								</td>
+								<td class="min-w-0">@include('ubr.partials.call.size-cell', ['var' => 'c'])</td>
+								<td class="min-w-0">@include('ubr.partials.call.website-cell', ['var' => 'c'])</td>
 								<td class="min-w-0">
 									@include('ubr.partials.lead-cell', ['var' => 'c'])
-									<button type="button" class="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-ink-soft hover:text-ink" @click="more = !more" :aria-expanded="more" :aria-label="'Szczegóły ocen: ' + c.name">
+									<button type="button" class="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-ink-soft hover:text-ink" @click="more = !more" :aria-expanded="more" :aria-label="'Szczegóły ocen: ' + c.name">
 										<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-3 transition" :class="more ? 'rotate-90' : ''" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
-										Relevance, Opportunity, decydenci
+										Szczegóły
 									</button>
 								</td>
-								<td class="text-right !px-3">@include('ubr.partials.row-actions', ['var' => 'c', 'save' => true, 'searchExpr' => 'search.id'])</td>
+								<td class="min-w-0">@include('ubr.partials.call.dm-cell', ['var' => 'c'])</td>
+								<td class="min-w-0">@include('ubr.partials.call.phones-cell', ['var' => 'c'])</td>
+								<td class="min-w-0">@include('ubr.partials.call.owner-cell', ['var' => 'c'])</td>
+								<td class="min-w-0">@include('ubr.partials.call.status-cell', ['var' => 'c'])</td>
+								<td class="text-right !px-2">@include('ubr.partials.call.quick-actions', ['var' => 'c', 'save' => true, 'searchExpr' => 'search.id'])</td>
 							</tr>
 							<tr x-show="more" x-cloak class="bg-canvas/50">
-								<td colspan="7" class="!py-3">@include('ubr.partials.discover-row-details', ['var' => 'c'])</td>
+								<td colspan="10" class="!py-3">@include('ubr.partials.discover-row-details', ['var' => 'c'])</td>
 							</tr>
 						</tbody>
 					</template>
 				</table>
 
-				{{-- Tablet / mobile (< 1024 px): karty --}}
-				<ul class="lg:hidden divide-y divide-line" x-show="results.items.length" aria-label="Wyniki (karty)">
+				{{-- < 1280 px: karty (te same dane i akcje) --}}
+				<ul class="xl:hidden divide-y divide-line" x-show="results.items.length" aria-label="Wyniki (karty)">
 					<template x-for="c in results.items" :key="c.id">
 						<li class="p-4" x-data="{ more: false }">
-							<div class="flex items-start gap-3">
-								<input type="checkbox" class="ubr-checkbox mt-1 shrink-0" x-show="canAnalyze || canFindContacts" :value="c.id" x-model.number="selected" :aria-label="'Zaznacz ' + c.name">
-								<div class="min-w-0 flex-1">@include('ubr.partials.discover-company-cell', ['var' => 'c'])</div>
-								<div class="shrink-0">@include('ubr.partials.row-actions', ['var' => 'c', 'save' => true, 'searchExpr' => 'search.id'])</div>
-							</div>
-							<div class="mt-3 grid grid-cols-2 gap-3 text-[12px]">
-								<div class="min-w-0">
-									<div class="text-[10px] font-bold uppercase tracking-wider text-ink-muted mb-1">Weryfikacja</div>
-									<span :class="$store.ubr.verificationBadge(c.verification.status)" x-text="c.verification.label"></span>
-								</div>
-								<div class="min-w-0">
-									<div class="text-[10px] font-bold uppercase tracking-wider text-ink-muted mb-1">Domena</div>
-									@include('ubr.partials.discover-domain-cell', ['var' => 'c'])
-								</div>
-								<div class="col-span-2 min-w-0">
-									<div class="text-[10px] font-bold uppercase tracking-wider text-ink-muted mb-1">Lead</div>
-									@include('ubr.partials.lead-cell', ['var' => 'c'])
-								</div>
-							</div>
+							@include('ubr.partials.call.card', ['var' => 'c', 'save' => true, 'searchExpr' => 'search.id', 'select' => 'canAnalyze || canFindContacts'])
 							<button type="button" class="mt-3 inline-flex items-center gap-1 h-9 text-[12px] font-semibold text-ink-soft hover:text-ink" @click="more = !more" :aria-expanded="more">
 								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-3.5 transition" :class="more ? 'rotate-90' : ''" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
-								<span x-text="more ? 'Mniej danych' : 'Więcej danych (oceny, lokalizacja, decydenci)'"></span>
+								<span x-text="more ? 'Mniej danych' : 'Więcej danych (oceny, weryfikacja, decydenci)'"></span>
 							</button>
 							<div x-show="more" x-cloak class="mt-2 rounded-xl bg-canvas/60 p-3">
 								<div class="text-[12px] mb-3">
-									<span class="font-semibold">Lokalizacja:</span>
-									<span x-text="[c.city, c.region].filter(Boolean).join(', ') || (c.location.match === 'filtered' ? filterLocationLabel : 'brak danych')"></span>
+									<span class="font-semibold">Weryfikacja:</span> <span :class="$store.ubr.verificationBadge(c.verification.status)" x-text="c.verification.label"></span>
 									<span class="ml-1" :class="$store.ubr.locationBadge(c.location.match || c.location.confidence)" x-text="$store.ubr.locationLabel(c.location.match || c.location.confidence)"></span>
 									<div class="text-[11px] text-ink-muted mt-0.5" x-show="c.verification.source" x-text="'Źródło weryfikacji: ' + c.verification.source"></div>
 								</div>

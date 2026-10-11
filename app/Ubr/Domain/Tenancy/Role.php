@@ -36,6 +36,10 @@ enum Role: string
 		'clickup.rules' => ['owner', 'admin'],
 		'prospects.view' => ['owner', 'admin', 'member'],
 		'prospects.manage' => ['owner', 'admin', 'member'],
+		// Świadome przekazanie firmy przypisanej do INNEGO pracownika (przejęcie wolnej firmy = prospects.manage).
+		'prospects.transfer' => ['owner', 'admin'],
+		// Płatne odblokowanie telefonu w Apollo (kredyty organizacji).
+		'contacts.reveal' => ['owner', 'admin'],
 		'integrations.view' => ['owner', 'admin', 'member'],
 		'integrations.manage' => ['owner', 'admin'],
 	];

@@ -139,7 +139,8 @@ final class PeopleExtractor
 		}
 
 		// Jedna linia: „Jan Kowalski – Prezes Zarządu”, „Jan Kowalski, CEO”, „Prezes Zarządu: Jan Kowalski”, „Jan Kowalski (Dyrektor Marketingu)”.
-		$parts = preg_split('/\s*(?:\s[–—|-]\s|[–—|:,(])\s*/u', $text, 2);
+		// preg_split zwraca false dla niepoprawnego UTF-8 (strony w innym kodowaniu) — wtedy brak podziału.
+		$parts = preg_split('/\s*(?:\s[–—|-]\s|[–—|:,(])\s*/u', $text, 2) ?: [$text];
 
 		if (count($parts) === 2 && mb_strlen($parts[0]) >= 4 && mb_strlen($parts[0]) <= 140 && mb_strlen($parts[1]) >= 2) {
 			$parts[1] = rtrim($parts[1], ' .');

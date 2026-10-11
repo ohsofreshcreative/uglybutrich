@@ -23,6 +23,12 @@
 			<button type="button" role="menuitem" class="ubr-menu-item" @click="run(() => { $store.ubr.drawer.tab = 'company'; $store.ubr.openCompany({{ $var }}.id) })">
 				@include('ubr.partials.icon', ['name' => 'building', 'class' => 'size-4']) Karta firmy
 			</button>
+			<a role="menuitem" class="ubr-menu-item" x-show="{{ $var }}.call?.ownership?.in_prospects && window.UBR?.page !== 'prospects'" :href="(window.UBR?.urls?.prospects || '#') + '?search=' + encodeURIComponent({{ $var }}.name)">
+				@include('ubr.partials.icon', ['name' => 'bookmark', 'class' => 'size-4']) Otwórz w Prospects
+			</a>
+			<button type="button" role="menuitem" class="ubr-menu-item" x-show="{{ $var }}.call?.ownership?.in_prospects" @click="run(() => { $store.ubr.drawer.tab = 'sales'; $store.ubr.openCompany({{ $var }}.id) })">
+				@include('ubr.partials.icon', ['name' => 'board', 'class' => 'size-4']) Sprzedaż i historia kontaktu
+			</button>
 
 			<template x-if="$store.ubr.can('analysis.run') && {{ $var }}.domain">
 				<div class="border-t border-line mt-1 pt-1">

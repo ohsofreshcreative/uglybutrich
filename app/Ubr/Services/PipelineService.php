@@ -147,7 +147,14 @@ class PipelineService
 				throw UbrException::invalid('Można przypisać tylko członka Twojej organizacji.');
 			}
 
-			if ($owner !== ($p['owner_user_id'] ? (int) $p['owner_user_id'] : null)) {
+			$current = $p['owner_user_id'] ? (int) $p['owner_user_id'] : null;
+
+			// Firmy przypisanej do INNEGO pracownika nie da się przejąć przypadkiem — przekazanie wymaga uprawnienia.
+			if ($owner !== $current && $current !== null && $current !== $ctx->userId && ! $ctx->can('prospects.transfer')) {
+				throw new UbrException('Firma jest przypisana do innego pracownika. Przekazanie wymaga uprawnień właściciela lub administratora organizacji.', 'ubr_assigned_other', 409);
+			}
+
+			if ($owner !== $current) {
 				$changes['owner_user_id'] = $owner;
 				$events[] = ['owner', $p['owner_user_id'], $owner];
 			}
@@ -304,16 +311,28 @@ class PipelineService
 			throw UbrException::invalid('Data działania nie może być w przyszłości — zaplanuj follow-up.');
 		}
 
+		$outcome = isset($input['outcome']) && $input['outcome'] !== '' ? sanitize_key((string) $input['outcome']) : null;
+
+		if ($outcome !== null && ($type !== 'call' || ! isset(PipelineCatalog::CALL_OUTCOMES[$outcome]))) {
+			throw UbrException::invalid('Nieznany wynik rozmowy (dotyczy tylko aktywności „Telefon”).');
+		}
+
 		$this->pipeline->addActivity([
 			'organization_id' => $ctx->organizationId,
 			'prospect_id' => $prospectId,
 			'user_id' => $ctx->userId,
 			'type' => $type,
+			'outcome' => $outcome,
 			'description' => $this->cleanText((string) ($input['description'] ?? ''), 3000, false),
 			'contact_id' => $contactId,
 			'occurred_at' => $occurred,
 		]);
 		$this->touch($ctx, $prospectId, $occurred);
+
+		// Ostatni kontakt = najnowsza ŚWIADOMIE zapisana aktywność kontaktowa (bez równoległej historii).
+		if (in_array($type, PipelineCatalog::CONTACT_ACTIVITY_TYPES, true) && (empty($p['last_contact_at']) || $occurred >= $p['last_contact_at'])) {
+			$this->pipeline->updateProspect($ctx->organizationId, $prospectId, ['last_contact_at' => $occurred, 'last_contact_outcome' => $outcome ?? $type]);
+		}
 
 		return $this->sales($ctx, (int) $p['company_id']);
 	}
@@ -433,6 +452,8 @@ class PipelineService
 			'priorities' => PipelineCatalog::PRIORITIES,
 			'qualifications' => PipelineCatalog::QUALIFICATIONS,
 			'activity_types' => PipelineCatalog::ACTIVITY_TYPES,
+			'call_outcomes' => PipelineCatalog::CALL_OUTCOMES,
+			'can_transfer' => $ctx->can('prospects.transfer'),
 			'reason_statuses' => PipelineCatalog::REASON_STATUSES,
 			'members' => $this->memberOptions($ctx),
 			'suggestion' => PipelineCatalog::suggestQualification($company, $relevance),
@@ -463,6 +484,12 @@ class PipelineService
 				'last_activity_at' => $p['last_activity_at'] ? gmdate('c', strtotime($p['last_activity_at'] . ' UTC')) : null,
 				'next_action_at' => $p['next_action_at'] ? gmdate('c', strtotime($p['next_action_at'] . ' UTC')) : null,
 				'archived_at' => $p['archived_at'] ? gmdate('c', strtotime($p['archived_at'] . ' UTC')) : null,
+				'do_not_contact' => (bool) ($p['do_not_contact'] ?? false),
+				'do_not_contact_reason' => $p['do_not_contact_reason'] ?? null,
+				'do_not_contact_at' => ! empty($p['do_not_contact_at']) ? gmdate('c', strtotime($p['do_not_contact_at'] . ' UTC')) : null,
+				'last_contact_at' => ! empty($p['last_contact_at']) ? gmdate('c', strtotime($p['last_contact_at'] . ' UTC')) : null,
+				'last_contact_outcome' => $p['last_contact_outcome'] ?? null,
+				'last_contact_outcome_label' => PipelineCatalog::outcomeLabel($p['last_contact_outcome'] ?? null),
 			],
 			'notes' => array_map(fn ($n) => [
 				'id' => (int) $n['id'],
@@ -476,6 +503,8 @@ class PipelineService
 				'id' => (int) $a['id'],
 				'type' => $a['type'],
 				'type_label' => PipelineCatalog::ACTIVITY_TYPES[$a['type']] ?? $a['type'],
+				'outcome' => $a['outcome'] ?? null,
+				'outcome_label' => isset($a['outcome']) ? (PipelineCatalog::CALL_OUTCOMES[$a['outcome']] ?? null) : null,
 				'description' => $a['description'],
 				'user' => $this->userBrief((int) $a['user_id']),
 				'contact_id' => $a['contact_id'] ? (int) $a['contact_id'] : null,
@@ -608,6 +637,28 @@ class PipelineService
 	{
 		$this->pipeline->updateProspect($ctx->organizationId, $prospectId, ['last_activity_at' => $at ?? Db::now()]);
 		$this->forgetStats($ctx->organizationId);
+	}
+
+	/**
+	 * Zakaz kontaktu (np. prośba firmy) — niezależny od etapu pipeline i przypisania. Blokuje akcje kontaktowe na listach
+	 * i wyklucza firmę z kolejek telefonów oraz priorytetów kontaktu.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public function setDoNotContact(TenantContext $ctx, int $prospectId, bool $value, ?string $reason): array
+	{
+		$this->assert($ctx, 'pipeline.manage');
+		$p = $this->prospectOr404($ctx, $prospectId);
+
+		if ((bool) $p['do_not_contact'] !== $value) {
+			$this->pipeline->updateProspect($ctx->organizationId, $prospectId, $value
+				? ['do_not_contact' => 1, 'do_not_contact_reason' => $reason !== null ? mb_substr($this->cleanText($reason, 500, false), 0, 500) : null, 'do_not_contact_by' => $ctx->userId, 'do_not_contact_at' => Db::now()]
+				: ['do_not_contact' => 0, 'do_not_contact_reason' => null, 'do_not_contact_by' => null, 'do_not_contact_at' => null]);
+			$this->pipeline->event($ctx->organizationId, $prospectId, $ctx->userId, 'do_not_contact', $value ? '0' : '1', $value ? '1' : '0');
+			$this->forgetStats($ctx->organizationId);
+		}
+
+		return $this->sales($ctx, (int) $p['company_id']);
 	}
 
 	/**

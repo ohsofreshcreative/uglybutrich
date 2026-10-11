@@ -288,6 +288,7 @@ class UbrCommand
 			'decydenci' => fn () => app(\App\Ubr\Services\ContactResearchRunner::class)->tick(false),
 			'ClickUp' => fn () => app(\App\Ubr\Services\ClickUpRunner::class)->tick(false),
 			'Lead Intelligence' => fn () => app(\App\Ubr\Services\LeadIntelligenceRunner::class)->tick(\App\Ubr\Services\LeadIntelligenceRunner::BATCH, false),
+			'telefony (Apollo)' => fn () => app(\App\Ubr\Services\ApolloPhoneRunner::class)->tick(false),
 		];
 
 		foreach ($steps as $label => $step) {
@@ -561,6 +562,8 @@ class UbrCommand
 		if ($action === 'purge') {
 			$days = (int) ($assoc['days'] ?? \App\Ubr\Services\ContactLimits::limits()['retention_days']);
 			WP_CLI::success('Usunięto nieaktywnych kontaktów: ' . $repo->purgeInactiveOlderThan(max(30, $days)));
+			// Prompt 10.3: kandydaci z Apollo niewidziani od tylu dni i bez zatwierdzonego dopasowania.
+			WP_CLI::success('Usunięto nieaktualnych kandydatów Apollo: ' . app(\App\Ubr\Services\ApolloContactService::class)->purgeStale(max(30, $days)));
 
 			return;
 		}
@@ -654,6 +657,231 @@ class UbrCommand
 		WP_CLI::log('Szyfrowanie dostępne: ' . ($box::available() ? 'tak' : 'NIE (brak libsodium)'));
 		WP_CLI::log('Źródło klucza: ' . ($box::source() ?? 'brak'));
 		WP_CLI::log('Identyfikator klucza: ' . ($box::keyId() ?? '—'));
+	}
+
+	/**
+	 * Prompt 10.2: telefony decydentów z oficjalnych stron firm z numerami „dział / osoba” (dowód powiązania).
+	 * Domyślnie lista firm; `--dry-run` — analiza bez zapisu; `--execute` — zapis powiązań i właścicieli numerów.
+	 * Pobierane są tylko strony źródłowe zapisanych numerów (maks. 3) i maks. 2 podstrony „zarząd / zespół”.
+	 *
+	 * ## OPTIONS
+	 *
+	 * --org=<slug>
+	 * : Organizacja.
+	 *
+	 * [--user=<id>]
+	 * : Użytkownik (członek organizacji).
+	 *
+	 * [--limit=<n>]
+	 * : Maks. firm (domyślnie 25).
+	 *
+	 * [--company=<id>]
+	 * : Jedna firma.
+	 *
+	 * [--dry-run]
+	 * : Analiza bez zapisu.
+	 *
+	 * [--execute]
+	 * : Zapis powiązań.
+	 *
+	 * @subcommand decision-phones
+	 */
+	public function decisionPhones(array $args, array $assoc): void
+	{
+		$ctx = $this->context($assoc);
+		$db = app(\App\Ubr\Infrastructure\Database\Db::class);
+		$limit = max(1, min(200, (int) ($assoc['limit'] ?? 25)));
+		$cp = $db->table(\App\Ubr\Infrastructure\Database\Tables::COMPANY_PHONES);
+		$rows = isset($assoc['company'])
+			? $db->rows("SELECT id, name, domain FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::COMPANIES)} WHERE id = %d", (int) $assoc['company'])
+			: $db->rows(
+				"SELECT c.id, c.name, c.domain FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::COMPANIES)} c
+				WHERE EXISTS (SELECT 1 FROM {$cp} x WHERE x.company_id = c.id AND x.org_key = 0 AND x.phone_type IN ('OTHER','SALES','SUPPORT'))
+					AND COALESCE(c.domain_status, '') <> 'mismatch'
+					AND (EXISTS (SELECT 1 FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::RESULTS)} r WHERE r.company_id = c.id AND r.organization_id = %d)
+						OR EXISTS (SELECT 1 FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::PROSPECTS)} p WHERE p.company_id = c.id AND p.organization_id = %d AND p.archived_at IS NULL))
+				ORDER BY c.id ASC LIMIT %d",
+				$ctx->organizationId,
+				$ctx->organizationId,
+				$limit
+			);
+
+		WP_CLI::log(sprintf('Firm: %d.', count($rows)));
+
+		if (! isset($assoc['execute']) && ! isset($assoc['dry-run'])) {
+			foreach ($rows as $r) {
+				WP_CLI::log(sprintf('  #%d %s (%s)', $r['id'], $r['name'], $r['domain']));
+			}
+
+			WP_CLI::success('Lista: nic nie pobrano. --dry-run = analiza bez zapisu, --execute = zapis powiązań (bezpłatne, bez Apollo).');
+
+			return;
+		}
+
+		$service = app(\App\Ubr\Services\DecisionPhoneService::class);
+
+		foreach ($rows as $i => $r) {
+			try {
+				$res = $service->scan($ctx, (int) $r['id'], ! isset($assoc['execute']));
+				WP_CLI::log(sprintf('  #%d %s: %s', $r['id'], $r['name'], $res['message']));
+
+				foreach ($res['people'] as $p) {
+					foreach ($p['phones'] as $ph) {
+						WP_CLI::log(sprintf('      %s (%s) — %s: %s [%s]', $p['name'], $p['title'] ?? 'bez stanowiska', $ph['number'], $ph['status_label'], $ph['evidence_label']));
+					}
+				}
+			} catch (\Throwable $e) {
+				WP_CLI::warning(sprintf('  #%d %s: %s', $r['id'], $r['name'], mb_substr($e->getMessage(), 0, 160)));
+			}
+
+			if ($i < count($rows) - 1) {
+				sleep(1);
+			}
+		}
+
+		WP_CLI::success('Gotowe.');
+	}
+
+	/**
+	 * Uzupełnienie numerów firm ze stron WWW (bezpłatne: strona główna + Kontakt, ochrona SSRF, timeout 10 s, przerwa 1 s).
+	 * Dla firm organizacji z domeną, których numerów jeszcze nie sprawdzano (np. przeanalizowanych przed etapem 10 — analizy
+	 * nie przechowują HTML). Domyślnie tylko lista kandydatów, bez pobierania; pobieranie wyłącznie z `--execute`.
+	 * Nie uruchamia analizy strony ani Apollo.
+	 *
+	 * ## OPTIONS
+	 *
+	 * --org=<slug>
+	 * : Organizacja.
+	 *
+	 * [--user=<id>]
+	 * : Użytkownik (członek organizacji).
+	 *
+	 * [--limit=<n>]
+	 * : Maks. liczba firm (domyślnie 25, maks. 200).
+	 *
+	 * [--execute]
+	 * : Pobierz strony i zapisz numery.
+	 *
+	 * @subcommand phones-backfill
+	 */
+	public function phonesBackfill(array $args, array $assoc): void
+	{
+		$ctx = $this->context($assoc);
+		$db = app(\App\Ubr\Infrastructure\Database\Db::class);
+		$limit = max(1, min(200, (int) ($assoc['limit'] ?? 25)));
+		$c = $db->table(\App\Ubr\Infrastructure\Database\Tables::COMPANIES);
+		$rows = $db->rows(
+			"SELECT c.id, c.name, c.domain FROM {$c} c
+			WHERE c.website_url IS NOT NULL AND c.website_url <> '' AND c.phones_checked_at IS NULL AND COALESCE(c.domain_status, '') <> 'mismatch'
+				AND (EXISTS (SELECT 1 FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::RESULTS)} r WHERE r.company_id = c.id AND r.organization_id = %d)
+					OR EXISTS (SELECT 1 FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::PROSPECTS)} p WHERE p.company_id = c.id AND p.organization_id = %d AND p.archived_at IS NULL))
+			ORDER BY c.id ASC LIMIT %d",
+			$ctx->organizationId,
+			$ctx->organizationId,
+			$limit
+		);
+
+		WP_CLI::log(sprintf('Firm do sprawdzenia: %d (limit %d).', count($rows), $limit));
+
+		if (! isset($assoc['execute'])) {
+			foreach ($rows as $r) {
+				WP_CLI::log(sprintf('  #%d %s (%s)', $r['id'], $r['name'], $r['domain']));
+			}
+
+			WP_CLI::success('Tryb próbny: nic nie pobrano. Dodaj --execute, aby pobrać strony (2 zapytania HTTP na firmę, bezpłatne).');
+
+			return;
+		}
+
+		$service = app(\App\Ubr\Services\CompanyPhoneService::class);
+		$found = 0;
+
+		foreach ($rows as $i => $r) {
+			try {
+				$res = $service->refresh($ctx, (int) $r['id']);
+				$main = $res['main']['number'] ?? null;
+				$found += $main ? 1 : 0;
+				WP_CLI::log(sprintf('  #%d %s: %s', $r['id'], $r['name'], $main ? 'numer ' . $main . ' (' . count($res['phones']) . ' numerów)' : 'brak numeru na stronie'));
+			} catch (\Throwable $e) {
+				WP_CLI::warning(sprintf('  #%d %s: %s', $r['id'], $r['name'], mb_substr($e->getMessage(), 0, 160)));
+			}
+
+			if ($i < count($rows) - 1) {
+				sleep(1);
+			}
+		}
+
+		WP_CLI::success(sprintf('Sprawdzono %d firm, numer główny znaleziono dla %d.', count($rows), $found));
+	}
+
+	/**
+	 * Bezpieczny test „Odblokuj telefon” (Apollo) do RĘCZNEGO zatwierdzenia. Domyślnie tryb próbny: tylko sprawdzenie
+	 * warunków (uprawnienia, flaga, identyfikator Apollo, limit) — BEZ zapytania do Apollo i bez zużycia kredytów.
+	 * Zapytanie płatne wyłącznie z `--execute --yes` (świadoma decyzja właściciela; koszt nieznany).
+	 *
+	 * ## OPTIONS
+	 *
+	 * --org=<slug>
+	 * : Organizacja.
+	 *
+	 * --contact=<id>
+	 * : ID osoby (musi pochodzić z Apollo).
+	 *
+	 * [--user=<id>]
+	 * : Użytkownik (właściciel / administrator organizacji).
+	 *
+	 * [--execute]
+	 * : Wyślij zapytanie do Apollo (PŁATNE).
+	 *
+	 * [--yes]
+	 * : Potwierdzenie nieznanego kosztu (wymagane z --execute).
+	 *
+	 * [--poll]
+	 * : Odbierz wyniki oczekujących zleceń (0 kredytów).
+	 *
+	 * @subcommand apollo-phone-test
+	 */
+	public function apolloPhoneTest(array $args, array $assoc): void
+	{
+		$ctx = $this->context($assoc);
+		$service = app(\App\Ubr\Services\ApolloPhoneService::class);
+
+		if (isset($assoc['poll'])) {
+			$r = app(\App\Ubr\Services\ApolloPhoneRunner::class)->tick(false);
+			WP_CLI::success(sprintf('Odpytano zleceń: %d, oczekujące: %d.', $r['processed'], $r['pending']));
+
+			return;
+		}
+
+		try {
+			$check = $service->preflight($ctx, (int) ($assoc['contact'] ?? 0));
+		} catch (UbrException $e) {
+			WP_CLI::error($e->getMessage());
+		}
+
+		WP_CLI::log('Stan numeru: ' . $check['phone']['status_label']);
+		WP_CLI::log('Koszt: ' . $check['cost']['message']);
+
+		foreach ($check['reasons'] as $reason) {
+			WP_CLI::warning($reason['message']);
+		}
+
+		if (! isset($assoc['execute'])) {
+			WP_CLI::success($check['can_unlock'] ? 'Tryb próbny: warunki spełnione. Nie wysłano zapytania (dodaj --execute --yes, aby zlecić PŁATNE odblokowanie).' : 'Tryb próbny: odblokowanie niemożliwe (powody powyżej). Nie wysłano zapytania.');
+
+			return;
+		}
+
+		if (! isset($assoc['yes'])) {
+			WP_CLI::error('Zapytanie płatne wymaga --yes (potwierdzenie, że koszt jest nieznany i może zużyć kredyty Apollo).');
+		}
+
+		if (! $check['can_unlock']) {
+			WP_CLI::error('Odblokowanie niemożliwe.');
+		}
+
+		$r = $service->reveal($ctx, (int) $assoc['contact'], (string) $check['confirm_token'], true);
+		WP_CLI::success(sprintf('Zlecenie #%d: %s %s', $r['reveal_id'], $r['status'], $r['message']));
 	}
 
 	/**

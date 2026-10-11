@@ -30,6 +30,7 @@ class ActionCenterRepository
 	 */
 	private function base(int $organizationId, string $owner, int $userId, array &$args): string
 	{
+		$args[] = $userId; // viewer_id (SELECT) — przed organization_id (WHERE), kolejność placeholderów
 		$args[] = $organizationId;
 		$ownerSql = '';
 
@@ -45,6 +46,8 @@ class ActionCenterRepository
 				c.name, c.domain, c.website_url, c.city, c.region, c.industry, c.verification_status, c.domain_status, c.analysis_status, c.analyzed_at, c.contacts_status, c.contacts_count,
 				c.top_contact_name, c.top_contact_title, c.top_contact_confidence, COALESCE(mr.review_status, 'not_reviewed') AS manual_review,
 				p.id AS prospect_id, p.status AS prospect_status, p.priority AS p_priority, p.owner_user_id, p.next_action_at,
+				COALESCE(p.do_not_contact, 0) AS p_dnc, %d AS viewer_id, c.main_phone_e164,
+				" . CallFilters::readiness('li.organization_id') . " AS call_readiness,
 				" . ActionPriorityEngine::sqlType() . " AS action_type
 			FROM {$this->t(Tables::LEAD_INTELLIGENCE)} li
 			INNER JOIN {$this->t(Tables::COMPANIES)} c ON c.id = li.company_id
@@ -71,7 +74,7 @@ class ActionCenterRepository
 		$args = [];
 		$from = $this->base($organizationId, $owner, $userId, $args);
 		$args[] = Db::now();
-		$sums = ['COUNT(*) AS evaluated', 'SUM(x.action_type IS NOT NULL AND s.id IS NULL) AS actionable', 'SUM(s.id IS NOT NULL) AS snoozed'];
+		$sums = ['COUNT(*) AS evaluated', 'SUM(x.action_type IS NOT NULL AND s.id IS NULL AND (x.owner_user_id IS NULL OR x.owner_user_id = x.viewer_id)) AS actionable', 'SUM(s.id IS NOT NULL) AS snoozed'];
 
 		foreach (array_keys(QueueCatalog::QUEUES) as $key) {
 			if ($key !== 'followups') {
@@ -81,7 +84,7 @@ class ActionCenterRepository
 
 		foreach (array_keys(ActionPriorityEngine::TYPES) as $type) {
 			if (in_array($type, ActionPriorityEngine::SNOOZABLE, true)) {
-				$sums[] = "SUM(x.action_type = '{$type}' AND s.id IS NULL) AS action_{$type}";
+				$sums[] = "SUM(x.action_type = '{$type}' AND s.id IS NULL AND (x.owner_user_id IS NULL OR x.owner_user_id = x.viewer_id)) AS action_{$type}";
 			}
 		}
 
@@ -108,6 +111,7 @@ class ActionCenterRepository
 			'SELECT x.*, ' . $this->reasonSelect() . " FROM {$from}" . $this->snoozeJoin() . '
 			LEFT JOIN ' . $this->t(Tables::LEAD_INTELLIGENCE) . ' lr ON lr.id = x.li_id
 			WHERE x.action_type IS NOT NULL AND s.id IS NULL
+				AND (x.owner_user_id IS NULL OR x.owner_user_id = x.viewer_id) -- firmy innego opiekuna nigdy w moich priorytetach (Prompt 10)
 			ORDER BY ' . ActionPriorityEngine::sqlOrder() . '
 			LIMIT %d OFFSET %d',
 			...$args
@@ -162,6 +166,12 @@ class ActionCenterRepository
 		if (in_array($f['recommendation'] ?? '', LeadFilters::ACTIONS, true)) {
 			$where .= ' AND x.recommendation = %s';
 			$args[] = $f['recommendation'];
+		}
+
+		// Prompt 10.2 — „Gotowe do telefonu”: bezpośrednio do decydenta (potwierdzony numer) / przez centralę firmy.
+		if (in_array($f['call_kind'] ?? '', ['direct', 'company'], true)) {
+			$where .= ' AND x.call_readiness = %s';
+			$args[] = $f['call_kind'] === 'direct' ? 'READY_DIRECT' : 'CALL_COMPANY';
 		}
 
 		if (in_array($f['manual_review'] ?? '', ['not_reviewed', 'good', 'average', 'poor', 'very_poor'], true)) {

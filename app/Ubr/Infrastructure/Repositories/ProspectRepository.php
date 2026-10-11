@@ -194,9 +194,18 @@ class ProspectRepository
 			array_push($args, ...$leadArgs);
 		}
 
+		// Cold Calling (telefony, gotowość, opiekun, wielkość, ostatni kontakt).
+		$callArgs = [];
+		$callWhere = CallFilters::where($filters, $callArgs, 'p.organization_id', (int) ($filters['user_id'] ?? 0));
+
+		if ($callWhere !== '') {
+			$where[] = substr($callWhere, 5);
+			array_push($args, ...$callArgs);
+		}
+
 		$orderBy = self::SORTABLE[$sort] ?? 'p.created_at';
 		$dir = strtolower($direction) === 'asc' ? 'ASC' : 'DESC';
-		$leadOrder = LeadFilters::order($sort, 'p.id DESC');
+		$leadOrder = CallFilters::order($sort, 'p.organization_id', 'COALESCE(li.lead_score, -1) DESC, p.id DESC') ?? LeadFilters::order($sort, 'p.id DESC');
 		$whereSql = implode(' AND ', $where);
 		// Trafność prospektu = najwyższa trafność firmy w wyszukiwaniach TEJ organizacji.
 		$from = "{$this->db->table(Tables::PROSPECTS)} p

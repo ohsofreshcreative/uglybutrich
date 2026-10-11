@@ -47,6 +47,31 @@ final class PipelineCatalog
 
 	public const FOLLOWUP_STATUSES = ['open' => 'Otwarte', 'completed' => 'Wykonane', 'cancelled' => 'Anulowane'];
 
+	/** Wynik rozmowy telefonicznej — zapisywany ŚWIADOMIE przez użytkownika (kliknięcie tel: niczego nie zapisuje). */
+	public const CALL_OUTCOMES = [
+		'no_answer' => 'Nie odebrał',
+		'call_back' => 'Oddzwonić później',
+		'not_interested' => 'Nie zainteresowany',
+		'interested' => 'Zainteresowany',
+		'meeting_booked' => 'Umówiono spotkanie',
+		'wrong_number' => 'Błędny numer',
+	];
+
+	/** Aktywności będące kontaktem z firmą (ustawiają „ostatni kontakt”). */
+	public const CONTACT_ACTIVITY_TYPES = ['call', 'email', 'linkedin', 'meeting'];
+
+	/** Etapy, w których kontakt z firmą jest prowadzony (status przypisania IN_PROGRESS). */
+	public const IN_PROGRESS_STATUSES = ['contacted', 'follow_up', 'in_discussion', 'proposal_sent'];
+
+	public static function outcomeLabel(?string $outcome): ?string
+	{
+		if ($outcome === null || $outcome === '') {
+			return null;
+		}
+
+		return self::CALL_OUTCOMES[$outcome] ?? self::ACTIVITY_TYPES[$outcome] ?? $outcome;
+	}
+
 	/**
 	 * @return array<string, array{label: string, description: string, closed: bool}>
 	 */

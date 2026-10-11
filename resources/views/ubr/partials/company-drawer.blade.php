@@ -90,6 +90,8 @@
 						<template x-for="f in c.flags" :key="f.key"><span :class="f.blocking ? 'ubr-badge-danger' : 'ubr-badge-unavailable'" x-text="f.label"></span></template>
 					</div>
 
+					@include('ubr.partials.call.company-phones')
+
 					{{-- Dane podstawowe --}}
 					<dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-[13px]">
 						<div class="col-span-2">

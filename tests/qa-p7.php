@@ -102,7 +102,7 @@ foreach (['partials/contact-card', 'partials/company-drawer', 'partials/sales-ta
 	$p7views .= (string) file_get_contents(get_theme_file_path('resources/views/ubr/' . $v . '.blade.php'));
 }
 preg_match_all('/:href="([^"]+)"/', $p7views, $p7hrefs);
-$p7unsafe = array_filter($p7hrefs[1], fn ($h) => ! str_contains($h, 'safeHref(') && ! str_starts_with($h, "'mailto:") && ! str_starts_with($h, "'tel:") && ! str_contains($h, 'UBR.urls'));
+$p7unsafe = array_filter($p7hrefs[1], fn ($h) => ! str_contains($h, 'safeHref(') && ! str_contains($h, 'safeTel(') && ! str_starts_with($h, "'mailto:") && ! str_starts_with($h, "'tel:") && ! str_contains($h, 'UBR.urls'));
 UbrT::eq([], array_values($p7unsafe), 'P7-4. wszystkie zewnętrzne :href w kartach firmy / kontaktów / prospektów przez safeHref()');
 
 /* ------------------------------------------------------------------ */

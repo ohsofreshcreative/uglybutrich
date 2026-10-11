@@ -133,7 +133,7 @@ class DiscoveryService
 		$this->assert($ctx, 'discovery.view');
 		$this->searches->findForOrganization($id, $ctx->organizationId) ?? throw UbrException::notFound('Nie znaleziono wyszukiwania.');
 
-		$data = $this->results->paginate($id, $ctx->organizationId, max(1, $page), max(1, min(100, $perPage)), $filter, $sort, $extra);
+		$data = $this->results->paginate($id, $ctx->organizationId, max(1, $page), max(1, min(100, $perPage)), $filter, $sort, $extra + ['user_id' => $ctx->userId]);
 
 		// Firmy bez aktualnej oceny Lead Intelligence → przeliczenie w tle (bez liczenia w tym żądaniu).
 		if (array_filter($data['items'], fn ($r) => ($r['li_status'] ?? null) === null || ! empty($r['li_stale']))) {
@@ -141,7 +141,7 @@ class DiscoveryService
 		}
 
 		return [
-			'items' => app(ContactResearchService::class)->applyOrganizationView($ctx, array_map(fn ($r) => CompanyPresenter::row($r), $data['items'])),
+			'items' => app(CallPresenter::class)->attach($ctx, app(ContactResearchService::class)->applyOrganizationView($ctx, array_map(fn ($r) => CompanyPresenter::row($r), $data['items'])), $data['items']),
 			'total' => $data['total'],
 			'page' => $page,
 			'per_page' => $perPage,

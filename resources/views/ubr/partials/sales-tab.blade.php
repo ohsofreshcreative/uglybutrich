@@ -79,6 +79,30 @@
 				</template>
 			</section>
 
+			{{-- Cold Calling: zakaz kontaktu (niezależny od etapu), ostatni kontakt, zapis wyniku rozmowy --}}
+			<section class="rounded-xl border p-4 space-y-3" :class="p.do_not_contact ? 'border-danger/40 bg-danger-soft/40' : 'border-line'" x-data="{ dncReason: '' }">
+				<div class="flex flex-wrap items-center gap-2">
+					<h3 class="font-extrabold text-[14px] flex-1">Kontakt telefoniczny</h3>
+					<span class="ubr-badge-danger" x-show="p.do_not_contact">Nie kontaktować</span>
+					<button type="button" class="ubr-btn-primary ubr-btn-sm" x-show="s.can_manage && !p.do_not_contact && !p.archived_at && (!p.owner_user_id || p.owner_user_id === s.me)" @click="$store.ubr.openOutcome($store.ubr.drawer.company, p.selected_contact_id)">@include('ubr.partials.icon', ['name' => 'note', 'class' => 'size-3.5']) Zapisz wynik rozmowy</button>
+				</div>
+				<div class="text-[12px] text-ink-soft" x-text="p.last_contact_at ? 'Ostatni kontakt: ' + $store.ubr.date(p.last_contact_at) + (p.last_contact_outcome_label ? ' — ' + p.last_contact_outcome_label : '') : 'Brak zapisanego kontaktu.'"></div>
+				<template x-if="p.do_not_contact">
+					<div class="text-[12px]">
+						<p x-show="p.do_not_contact_reason" x-text="'Powód: ' + p.do_not_contact_reason"></p>
+						<p class="text-ink-muted" x-text="'Od: ' + $store.ubr.date(p.do_not_contact_at)"></p>
+						<button type="button" class="ubr-btn-ghost ubr-btn-sm mt-2" x-show="s.can_manage" @click="$store.ubr.setDoNotContact(false)">Zdejmij zakaz kontaktu</button>
+					</div>
+				</template>
+				<template x-if="!p.do_not_contact && s.can_manage && !p.archived_at">
+					<div class="flex flex-wrap gap-2">
+						<input class="ubr-input flex-1 min-w-[200px]" maxlength="500" x-model="dncReason" placeholder="Powód zakazu kontaktu (np. prośba firmy)" aria-label="Powód zakazu kontaktu">
+						<button type="button" class="ubr-btn-danger ubr-btn-sm h-10" @click="$store.ubr.setDoNotContact(true, dncReason); dncReason = ''">Nie kontaktować</button>
+					</div>
+				</template>
+				<p class="text-[11px] text-ink-muted">Zakaz kontaktu wyklucza firmę z kolejek telefonów i priorytetów oraz blokuje akcje kontaktowe na listach (dla całej organizacji).</p>
+			</section>
+
 			{{-- Kwalifikacja leada: sugestia z istniejących scoringów, decyzja zawsze ręczna --}}
 			<section class="rounded-xl border border-line p-4 space-y-3">
 				<div class="flex flex-wrap items-center gap-2">
@@ -152,8 +176,8 @@
 				<ul class="space-y-2">
 					<template x-for="a in s.activities" :key="a.id">
 						<li class="rounded-xl border border-line px-3 py-2 text-[13px]">
-							<div class="flex items-center gap-2"><span class="ubr-badge-declared" x-text="a.type_label"></span><span class="text-[12px] text-ink-muted" x-text="$store.ubr.date(a.occurred_at) + ' · ' + (a.user ? a.user.name : '—')"></span></div>
-							<p class="mt-1 whitespace-pre-line" x-text="a.description"></p>
+							<div class="flex items-center gap-2"><span class="ubr-badge-declared" x-text="a.type_label"></span><span class="ubr-badge-confirmed" x-show="a.outcome_label" x-text="a.outcome_label"></span><span class="text-[12px] text-ink-muted" x-text="$store.ubr.date(a.occurred_at) + ' · ' + (a.user ? a.user.name : '—')"></span></div>
+							<p class="mt-1 whitespace-pre-line" x-show="a.description" x-text="a.description"></p>
 						</li>
 					</template>
 				</ul>

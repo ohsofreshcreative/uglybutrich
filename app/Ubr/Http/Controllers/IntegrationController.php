@@ -54,4 +54,39 @@ class IntegrationController
 
 		return $this->apollo->testSearchAccess($ctx->organizationId);
 	}
+
+	/**
+	 * Prompt 10.2 — JEDEN kontrolowany test Apollo People API Search na istniejącej firmie (0 kredytów wg dokumentacji,
+	 * bez e-maili i telefonów, bez zapisu osób, bez włączania funkcji). Wymaga potwierdzenia; maks. 1 test na godzinę.
+	 */
+	public function peopleTest(WP_REST_Request $request): array
+	{
+		$ctx = $this->tenants->require('integrations.manage');
+		$params = (array) $request->get_json_params();
+
+		if (empty($params['confirm'])) {
+			throw \App\Ubr\Support\UbrException::invalid('Test wymaga potwierdzenia (confirm).');
+		}
+
+		$companyId = (int) ($params['company_id'] ?? 0);
+		$companies = app(\App\Ubr\Infrastructure\Repositories\CompanyRepository::class);
+		$company = $companies->find($companyId);
+
+		if (! $company || ! $companies->isVisibleTo($companyId, $ctx->organizationId) || empty($company['domain'])) {
+			throw \App\Ubr\Support\UbrException::notFound('Nie znaleziono firmy z domeną.');
+		}
+
+		$lock = 'ubr_apollo_people_test_' . $ctx->organizationId;
+
+		if (get_transient($lock)) {
+			throw \App\Ubr\Support\UbrException::invalid('Test People Search był wykonany w ciągu ostatniej godziny.');
+		}
+
+		set_transient($lock, 1, HOUR_IN_SECONDS);
+		$db = app(\App\Ubr\Infrastructure\Database\Db::class);
+		$apolloOrg = $db->value('SELECT external_id FROM ' . $db->table(\App\Ubr\Infrastructure\Database\Tables::COMPANY_EXTERNAL_IDS) . " WHERE company_id = %d AND provider = 'apollo' LIMIT 1", $companyId);
+
+		return ['company' => ['id' => $companyId, 'name' => $company['name'], 'domain' => $company['domain']], 'endpoint' => 'POST ' . ApolloProvider::BASE_URL . \App\Ubr\Infrastructure\Contacts\ApolloPeopleSource::ENDPOINT, 'credits_note' => 'Wg dokumentacji Apollo: 0 kredytów; bez e-maili i numerów telefonów. Nic nie zostało zapisane.']
+			+ app(\App\Ubr\Infrastructure\Contacts\ApolloPeopleSource::class)->controlledTest((string) $company['domain'], $ctx->organizationId, $apolloOrg ? (string) $apolloOrg : null);
+	}
 }

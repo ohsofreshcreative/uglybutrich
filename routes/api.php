@@ -9,6 +9,7 @@
  */
 
 use App\Ubr\Http\Controllers\AnalysisController;
+use App\Ubr\Http\Controllers\CallingController;
 use App\Ubr\Http\Controllers\ClickUpController;
 use App\Ubr\Http\Controllers\CompanyController;
 use App\Ubr\Http\Controllers\ContactController;
@@ -75,6 +76,28 @@ return [
 	['POST', '/notes/(?P<id>\d+)', [PipelineController::class, 'updateNote'], 'pipeline.manage'],
 	['DELETE', '/notes/(?P<id>\d+)', [PipelineController::class, 'deleteNote'], 'pipeline.manage'],
 	['POST', '/prospects/(?P<id>\d+)/activities', [PipelineController::class, 'addActivity'], 'pipeline.manage'],
+	// Cold Calling Workspace (Prompt 10): telefony, odblokowanie (Apollo, płatne — tylko po potwierdzeniu), opiekun, wynik rozmowy.
+	['GET', '/companies/(?P<id>\d+)/phones', [CallingController::class, 'phones'], 'companies.view'],
+	['POST', '/companies/(?P<id>\d+)/phones/refresh', [CallingController::class, 'refreshPhones'], 'analysis.run'],
+	['POST', '/companies/(?P<id>\d+)/phones', [CallingController::class, 'addPhone'], 'pipeline.manage'],
+	['DELETE', '/companies/(?P<id>\d+)/phones/(?P<phone_id>\d+)', [CallingController::class, 'deletePhone'], 'pipeline.manage'],
+	// Direct Decision Maker Phones (Prompt 10.2): powiązania numer ↔ osoba z dowodem; decyzje organizacji prywatne.
+	['POST', '/companies/(?P<id>\d+)/decision-phones/scan', [CallingController::class, 'scanDecisionPhones'], 'contacts.run'],
+	['GET', '/contacts/(?P<id>\d+)/phone-links', [CallingController::class, 'contactPhoneLinks'], 'contacts.view'],
+	['POST', '/contacts/(?P<id>\d+)/phone-links', [CallingController::class, 'decidePhoneLink'], 'contacts.manage'],
+	['DELETE', '/contacts/(?P<id>\d+)/phone-links/(?P<link_id>\d+)', [CallingController::class, 'removePhoneLink'], 'contacts.manage'],
+	['GET', '/contacts/(?P<id>\d+)/phone-reveal', [CallingController::class, 'revealPreflight'], 'contacts.view'],
+	['POST', '/contacts/(?P<id>\d+)/phone-reveal', [CallingController::class, 'reveal'], 'contacts.reveal'],
+	// Apollo Contact Matching (Prompt 10.3): kandydaci z People API Search, dopasowania prywatne dla organizacji.
+	['GET', '/companies/(?P<id>\d+)/apollo-candidates', [CallingController::class, 'apolloCandidates'], 'contacts.view'],
+	['POST', '/companies/(?P<id>\d+)/apollo-candidates/search', [CallingController::class, 'apolloSearch'], 'contacts.run'],
+	['POST', '/apollo-matches/(?P<id>\d+)', [CallingController::class, 'apolloDecide'], 'contacts.manage'],
+	['POST', '/apollo-candidates/(?P<id>\d+)/link', [CallingController::class, 'apolloLink'], 'contacts.manage'],
+	['GET', '/apollo-matches/(?P<id>\d+)/history', [CallingController::class, 'apolloHistory'], 'contacts.view'],
+	['POST', '/companies/(?P<id>\d+)/claim', [CallingController::class, 'claim'], 'prospects.manage'],
+	['POST', '/companies/(?P<id>\d+)/call-outcome', [CallingController::class, 'callOutcome'], 'pipeline.manage'],
+	['POST', '/prospects/(?P<id>\d+)/transfer', [CallingController::class, 'transfer'], 'pipeline.manage'],
+	['POST', '/prospects/(?P<id>\d+)/do-not-contact', [CallingController::class, 'doNotContact'], 'pipeline.manage'],
 	['POST', '/prospects/(?P<id>\d+)/followups', [PipelineController::class, 'addFollowup'], 'pipeline.manage'],
 	['POST', '/followups/(?P<id>\d+)', [PipelineController::class, 'updateFollowup'], 'pipeline.manage'],
 
@@ -106,6 +129,7 @@ return [
 	['GET', '/integrations/apollo', [IntegrationController::class, 'apollo'], 'integrations.view'],
 	['POST', '/integrations/apollo/test', [IntegrationController::class, 'test'], 'integrations.manage'],
 	['POST', '/integrations/apollo/test-search', [IntegrationController::class, 'testSearch'], 'integrations.manage'],
+	['POST', '/integrations/apollo/people-test', [IntegrationController::class, 'peopleTest'], 'integrations.manage'],
 
 	['GET', '/organization', [OrganizationController::class, 'show'], 'organization.view'],
 	['POST', '/organization', [OrganizationController::class, 'update'], 'organization.update'],

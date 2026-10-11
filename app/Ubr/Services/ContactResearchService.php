@@ -175,6 +175,10 @@ class ContactResearchService
 		$latest = $this->runs->latestForCompany($companyId, true);
 		$active = $this->runs->activeForCompany($companyId);
 		$limits = ContactLimits::limits($ctx->organizationId);
+		// Prompt 10.2: powiązania numer ↔ osoba (dowód, status, źródło, daty) i numery firmy do ręcznego przypisania.
+		$ids = array_map(fn ($c) => (int) $c['id'], array_merge($view['top'], $view['others'], $view['hidden']));
+		$links = app(DecisionPhoneService::class)->forContacts($ctx, $ids);
+		$present = fn ($c) => $this->presentContact($c, $view['sources'], $view['history'], $view['reviews']) + ['phone_links' => $links[(int) $c['id']] ?? []];
 
 		return [
 			'company' => ['id' => (int) $company['id'], 'name' => $company['name'], 'domain' => $company['domain'] ?: null, 'website_url' => $company['website_url'] ?: null, 'krs' => $company['krs'] ?: null, 'verification_status' => $company['verification_status'] ?? null, 'domain_status' => $company['domain_status'] ?? null, 'size_band' => ContactPriorityCalculator::sizeBand($company)],
@@ -183,17 +187,19 @@ class ContactResearchService
 			'active' => $active ? ['id' => (int) $active['id'], 'status' => $active['status']] : null,
 			'researched_at' => ! empty($company['contacts_researched_at']) ? gmdate('c', strtotime($company['contacts_researched_at'] . ' UTC')) : null,
 			'count' => count($view['top']) + count($view['others']),
-			'top' => array_map(fn ($c) => $this->presentContact($c, $view['sources'], $view['history'], $view['reviews']), $view['top']),
+			'top' => array_map($present, $view['top']),
 			'top1_note' => $view['top1_note'],
 			'missing_message' => 'Nie znaleziono kolejnego wiarygodnego kontaktu.',
-			'others' => array_map(fn ($c) => $this->presentContact($c, $view['sources'], $view['history'], $view['reviews']), $view['others']),
-			'hidden' => array_map(fn ($c) => $this->presentContact($c, $view['sources'], $view['history'], $view['reviews']), $view['hidden']),
+			'others' => array_map($present, $view['others']),
+			'hidden' => array_map($present, $view['hidden']),
 			'board' => $latest['sources']['board'] ?? null,
 			'sources' => array_map(fn ($s) => array_intersect_key((array) $s, array_flip(['state', 'message', 'url'])), array_diff_key((array) ($latest['sources'] ?? []), ['board' => 1])),
 			'company_channels' => array_map(fn ($ch) => $ch + ['label' => $ch['type'] === 'COMPANY_GENERAL_EMAIL' ? 'Ogólny e-mail firmy (COMPANY_GENERAL_EMAIL)' : 'E-mail działu: ' . (['marketing' => 'marketing', 'management' => 'zarząd / sekretariat', 'sales' => 'sprzedaż'][$ch['department']] ?? $ch['department'])], (array) (json_decode((string) ($company['company_channels'] ?? ''), true) ?: [])),
 			'history' => array_map(fn ($r) => $this->presentRun($r, $ctx), $this->runs->historyForCompany($companyId)),
 			'can_run' => $ctx->can('contacts.run'),
 			'can_manage' => $ctx->can('contacts.manage'),
+			'company_numbers' => array_map(fn ($p) => ['id' => (int) $p['id'], 'number' => \App\Ubr\Domain\Phones\PhoneNumber::format((string) $p['e164']), 'e164' => (string) $p['e164'], 'type_label' => CompanyPhoneService::TYPE_LABELS[$p['phone_type']] ?? $p['phone_type'], 'owner_label' => $p['owner_class'] ? (\App\Ubr\Domain\Phones\PersonPhoneExtractor::OWNER_LABELS[$p['owner_class']] ?? null) : null, 'owner_note' => $p['owner_note'] ?? null], app(\App\Ubr\Infrastructure\Repositories\CompanyPhoneRepository::class)->forCompanies([$companyId], $ctx->organizationId)[$companyId] ?? []),
+			'phone_scan' => ['can_run' => $ctx->can('contacts.run') && ! empty($company['website_url']) && ($company['domain_status'] ?? '') !== 'mismatch', 'cooldown_minutes' => (int) (DecisionPhoneService::COOLDOWN / 60)],
 			'limits' => ['cooldown_hours' => $limits['manual_cooldown_hours'], 'fresh_days' => $limits['fresh_days']],
 			'apollo' => ApolloPeopleSource::status(),
 			'notice' => 'Dane zawodowe z publicznych, oficjalnych źródeł (KRS, strona firmy). Opublikowany adres e-mail nie oznacza zgody na marketing — przed kontaktem oceń obowiązki wynikające z RODO i przepisów o komunikacji elektronicznej.',

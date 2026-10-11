@@ -77,7 +77,8 @@ class ActionCenterService
 	 */
 	public function summary(TenantContext $ctx, string $owner = 'all'): array
 	{
-		$key = sprintf('ubr_ac_%d_%s_%d_%d_%d', $ctx->organizationId, $owner, $owner === 'mine' ? $ctx->userId : 0, self::globalVersion(), self::orgVersion($ctx->organizationId));
+		// Liczniki zależą od oglądającego (Prompt 10: firmy innych opiekunów poza moimi priorytetami / „Gotowe do telefonu”).
+		$key = sprintf('ubr_ac_%d_%s_%d_%d_%d', $ctx->organizationId, $owner, $ctx->userId, self::globalVersion(), self::orgVersion($ctx->organizationId));
 		$cached = get_transient($key);
 
 		if (is_array($cached)) {
@@ -274,17 +275,79 @@ class ActionCenterService
 			'redesign' => sanitize_key((string) ($query['redesign'] ?? '')),
 			'recommendation' => sanitize_key((string) ($query['recommendation'] ?? '')),
 			'manual_review' => sanitize_key((string) ($query['manual_review'] ?? '')),
+			'call_kind' => in_array($query['call_kind'] ?? '', ['direct', 'company'], true) ? (string) $query['call_kind'] : '',
 		];
 		$res = $this->repo->queue($ctx->organizationId, $key, $owner, $ctx->userId, $filters, $per, ($page - 1) * $per);
+		$items = array_map(fn ($r) => $this->presentQueueRow($r), $res['items']);
+		$breakdown = null;
+
+		// „Gotowe do telefonu”: liczby obu ścieżek i numer decydenta w wierszu (tylko dla bieżącej strony).
+		if ($key === 'ready_to_call') {
+			$breakdown = [];
+
+			foreach (['direct', 'company'] as $kind) {
+				$breakdown[$kind] = (int) $this->repo->queue($ctx->organizationId, $key, $owner, $ctx->userId, ['call_kind' => $kind] + $filters, 1, 0)['total'];
+			}
+
+			$items = $this->withDecisionPhones($ctx, $items);
+		}
 
 		return [
 			'queue' => ['key' => $key] + $def,
 			'filters' => $filters,
-			'items' => array_map(fn ($r) => $this->presentQueueRow($r), $res['items']),
+			'breakdown' => $breakdown,
+			'items' => $items,
 			'total' => $res['total'],
 			'page' => $page,
 			'per_page' => $per,
 		];
+	}
+
+	/**
+	 * Numer potwierdzonego decydenta dla wierszy READY_DIRECT (te same reguły co listy: CallFilters::phoneContact).
+	 *
+	 * @param list<array<string, mixed>> $items
+	 * @return list<array<string, mixed>>
+	 */
+	private function withDecisionPhones(TenantContext $ctx, array $items): array
+	{
+		$ids = array_values(array_map(fn ($it) => (int) $it['company']['id'], array_filter($items, fn ($it) => ($it['call']['readiness']['key'] ?? '') === 'READY_DIRECT')));
+
+		if ($ids === []) {
+			return $items;
+		}
+
+		$db = app(\App\Ubr\Infrastructure\Database\Db::class);
+		$o = (string) (int) $ctx->organizationId;
+		$rows = $db->rows('SELECT c.id, ' . \App\Ubr\Infrastructure\Repositories\CallFilters::phoneContact($o) . " AS contact_id FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::COMPANIES)} c WHERE c.id IN (" . \App\Ubr\Infrastructure\Database\Db::placeholders($ids) . ')', ...$ids);
+		$byCompany = array_column($rows, 'contact_id', 'id');
+		$contactIds = array_values(array_filter(array_map('intval', $byCompany)));
+		$links = app(DecisionPhoneService::class)->forContacts($ctx, $contactIds);
+		$revealed = app(\App\Ubr\Infrastructure\Repositories\PhoneRevealRepository::class)->phonesFor($ctx->organizationId, $contactIds);
+		$contacts = [];
+
+		foreach ($contactIds ? $db->rows("SELECT id, full_name, job_title FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::CONTACTS)} WHERE id IN (" . \App\Ubr\Infrastructure\Database\Db::placeholders($contactIds) . ')', ...$contactIds) : [] as $c) {
+			$contacts[(int) $c['id']] = $c;
+		}
+
+		foreach ($items as &$it) {
+			$cid = (int) ($byCompany[(int) $it['company']['id']] ?? 0);
+
+			if (! $cid || ! isset($contacts[$cid])) {
+				continue;
+			}
+
+			$state = ApolloPhoneService::state($links[$cid] ?? [], $revealed[$cid] ?? [], null, false);
+			$verified = array_values(array_filter($state['numbers'], fn ($n) => $n['verified']));
+
+			if ($verified !== []) {
+				$it['call']['decision_maker'] = ['name' => $contacts[$cid]['full_name'], 'title' => $contacts[$cid]['job_title'], 'phone' => $verified[0]];
+			}
+		}
+
+		unset($it);
+
+		return $items;
 	}
 
 	/**
@@ -297,6 +360,12 @@ class ActionCenterService
 
 		return [
 			'company' => $this->companyBrief($r),
+			// Cold Calling (Prompt 10): gotowość do telefonu i numer główny ze strony (bez numerów prywatnych organizacji).
+			'call' => [
+				'readiness' => \App\Ubr\Domain\Calling\CallReadiness::present($r['call_readiness'] ?? null),
+				'main_phone' => ! empty($r['main_phone_e164']) ? ['number' => \App\Ubr\Domain\Phones\PhoneNumber::format((string) $r['main_phone_e164']), 'e164' => (string) $r['main_phone_e164'], 'tel' => 'tel:' . $r['main_phone_e164']] : null,
+				'dnc' => (bool) ($r['p_dnc'] ?? false),
+			],
 			'lead' => $this->leadBrief($r) + ['redesign' => $r['redesign'], 'recommendation' => $r['recommendation'], 'recommendation_label' => LeadRecommender::ACTIONS[$r['recommendation']] ?? $r['recommendation'], 'status' => $r['score_status'], 'stale' => (bool) $r['stale']],
 			'action' => $type ? ['type' => $type, 'label' => ActionPriorityEngine::TYPES[$type]['label'], 'label_pl' => ActionPriorityEngine::TYPES[$type]['label_pl'], 'cta' => ['action' => $this->ctaAction($type), 'label' => ActionPriorityEngine::TYPES[$type]['cta']]] : null,
 			'reason' => $r['has_blocker'] ? ($r['blocker_label'] ?: 'Hard blocker') : ($r['li_reason'] ?? ''),
@@ -619,6 +688,7 @@ class ActionCenterService
 		return [
 			'has_li' => ! empty($r['li_id']),
 			'has_blocker' => (int) ($r['has_blocker'] ?? 0) === 1,
+			'do_not_contact' => (int) ($r['p_dnc'] ?? 0) === 1,
 			'recommendation' => $r['recommendation'] ?? null,
 			'analysis_status' => $r['analysis_status'] ?? null,
 			'analyzed_at' => $r['analyzed_at'] ?? null,

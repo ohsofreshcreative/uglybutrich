@@ -11,6 +11,9 @@ use App\Ubr\Infrastructure\Database\Migrations\M006SalesPipelineClickUp;
 use App\Ubr\Infrastructure\Database\Migrations\M007LeadIntelligence;
 use App\Ubr\Infrastructure\Database\Migrations\M008ActionCenter;
 use App\Ubr\Infrastructure\Database\Migrations\M009ManualWebsiteReview;
+use App\Ubr\Infrastructure\Database\Migrations\M010PhonesOwnership;
+use App\Ubr\Infrastructure\Database\Migrations\M011DecisionMakerPhones;
+use App\Ubr\Infrastructure\Database\Migrations\M012ApolloContactMatching;
 use App\Ubr\Infrastructure\Database\Migrations\Migration;
 use Throwable;
 
@@ -46,6 +49,9 @@ class Migrator
 			new M007LeadIntelligence(),
 			new M008ActionCenter(),
 			new M009ManualWebsiteReview(),
+			new M010PhonesOwnership(),
+			new M011DecisionMakerPhones(),
+			new M012ApolloContactMatching(),
 		];
 	}
 

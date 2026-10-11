@@ -48,6 +48,20 @@ final class Tables
 
 	public const MANUAL_REVIEW_HISTORY = 'ubr_manual_review_history';
 
+	public const COMPANY_PHONES = 'ubr_company_phones';
+
+	public const PHONE_REVEALS = 'ubr_phone_reveals';
+
+	public const CONTACT_PHONES = 'ubr_contact_phones';
+
+	public const CONTACT_PHONE_LINKS = 'ubr_contact_phone_links';
+
+	public const APOLLO_PEOPLE = 'ubr_apollo_people';
+
+	public const APOLLO_MATCHES = 'ubr_apollo_matches';
+
+	public const APOLLO_MATCH_HISTORY = 'ubr_apollo_match_history';
+
 	public static function name(string $table): string
 	{
 		global $wpdb;
@@ -95,6 +109,13 @@ final class Tables
 			self::ACTION_SNOOZES,
 			self::MANUAL_REVIEWS,
 			self::MANUAL_REVIEW_HISTORY,
+			self::COMPANY_PHONES,
+			self::PHONE_REVEALS,
+			self::CONTACT_PHONES,
+			self::CONTACT_PHONE_LINKS,
+			self::APOLLO_PEOPLE,
+			self::APOLLO_MATCHES,
+			self::APOLLO_MATCH_HISTORY,
 		];
 	}
 }

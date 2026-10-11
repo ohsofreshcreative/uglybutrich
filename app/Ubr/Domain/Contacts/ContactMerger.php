@@ -47,6 +47,8 @@ final class ContactMerger
 					'former' => (bool) ($c['former'] ?? false),
 					'other_entity' => $c['other_entity'] ?? null,
 					'obfuscated' => (bool) ($c['obfuscated'] ?? false),
+					'external_provider' => $c['external_provider'] ?? null,
+					'external_id' => $c['external_id'] ?? null,
 					'conflict' => false,
 					'observed_roles' => [$c['role']['role']],
 					'sources' => [$source],
@@ -58,7 +60,7 @@ final class ContactMerger
 			$m['sources'][] = $source;
 			$m['observed_roles'][] = $c['role']['role'];
 
-			foreach (['email', 'role_email', 'phone', 'profile'] as $f) {
+			foreach (['email', 'role_email', 'phone', 'profile', 'external_provider', 'external_id'] as $f) {
 				$m[$f] ??= $c[$f] ?? null;
 			}
 

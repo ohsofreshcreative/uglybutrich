@@ -104,9 +104,9 @@ Reguły bezpieczeństwa (obowiązkowe):
   (`ubr_lead_intelligence`); insights per firma. Zmiana logiki = podbij `LeadPotentialCalculator::VERSION` / `WebsiteInsightGenerator::VERSION`
   / `LeadIntelligenceService::VERSION` (oceny przeliczą się w tle). Nowe źródło zmiany danych firmy = `do_action('ubr/company/changed', $id, $reason, $orgId)`.
 - Discover UI / podgląd strony (Prompt 5.1, ARCHITECTURE §14): menu akcji wiersza tylko przez wspólny partial `row-actions` (Discover,
-  Prospects) i wspólny modal `preview-modal` (`$store.ubr.openPreview`) — nie twórz kopii. Tabela Discover bez przewijania w poziomie:
-  `table-fixed` + procentowy `colgroup`, nie dodawaj `min-width` ani `overflow-x-hidden`; dodatkowe dane wiersza → rozwijane
-  szczegóły lub menu, nie nowa kolumna. Iframe podglądu: tylko adres po `safeWebsiteUrl()` (http/https), bez proxy, bez obchodzenia
+  Prospects; od Prompt 10 dołączany przez `partials/call/quick-actions`) i wspólny modal `preview-modal` (`$store.ubr.openPreview`) — nie twórz kopii. Tabele Discover i Prospects bez przewijania w poziomie:
+  `table-fixed` + procentowy `colgroup`, nie dodawaj `min-width` ani `overflow-x-hidden`; kolumny wg Prompt 10 (Firma, Wielkość, Strona WWW, Ocena,
+  Decydent, Telefony, Opiekun / CRM, Status kontaktu, Akcje); dodatkowe dane wiersza → rozwijane szczegóły lub menu, nie nowa kolumna. Iframe podglądu: tylko adres po `safeWebsiteUrl()` (http/https), bez proxy, bez obchodzenia
   X-Frame-Options / CSP, bez `allow-top-navigation` i bez dostępu do kamery / mikrofonu / lokalizacji; nie opieraj stanu na
   `iframe.onload`. Podgląd nie może uruchamiać analizy, crawlera ani płatnych API (screenshoty tylko z istniejących analiz). Testy: `tests/discover-ui.php`
   (w `tests/run.php`) + `node tests/js/preview-url.test.mjs`.
@@ -118,7 +118,7 @@ Reguły bezpieczeństwa (obowiązkowe):
   list / KPI tylko w `QueueCatalog`. Agregaty w SQL; po zmianie danych istotnych dla dashboardu wywołaj
   `ActionCenterService::bumpOrganization($orgId)` (dane prywatne) lub polegaj na `ubr/company/changed` (dane wspólne).
   Manual Website Review jest subiektywne i prywatne: NIE może zmieniać scoringów ani wywoływać `ubr/company/changed`; historia bez
-  nadpisywania. Następna migracja: M010 (wdrożone M001–M009). Instrukcja wdrożenia: `docs/DEPLOYMENT.md`.
+  nadpisywania. Instrukcja wdrożenia: `docs/DEPLOYMENT.md`.
 - Audyt QA (Prompt 7, `docs/QA-REPORT.md`, ARCHITECTURE §16) — zasady obowiązujące dalej:
   * Każde pobranie adresu zewnętrznego (PHP) przez `UrlGuard` krok po kroku przy przekierowaniach i z przypięciem IP
     (`PageFetcher::pin()`); nigdy `wp_safe_remote_get` / `wp_remote_get` z `redirection > 0` dla adresów ze stron firm. Adresy IP
@@ -134,6 +134,48 @@ Reguły bezpieczeństwa (obowiązkowe):
   * Daty z `<input type="datetime-local">` wysyłaj jako ISO z offsetem (`isoFromLocalInput`), nigdy „gołą” wartość.
   * Komunikaty błędów dla użytkownika bez treści wyjątków bazy/PHP (szczegóły do `Redactor::log`).
   * Testy regresji audytu: `tests/qa-p7.php`, `node tests/js/ssrf-ip.test.mjs`, `node tests/js/datetime.test.mjs`.
+- Cold Calling Workspace (Prompt 10, ARCHITECTURE §17) — zasady:
+  * Telefony nie są danymi wejściowymi scoringów (Lead Potential / Opportunity / Contact Priority) — znaleziony numer niczego nie podnosi.
+  * Numery tylko przez `PhoneNumber::parse()` (E.164); nowy kontekst wykluczający (np. kolejny identyfikator) dopisz do
+    `CompanyPhoneExtractor::NOT_PHONE_WORD`. Numery ze strony = `org_key 0` (wspólne), ręczne i z Apollo = organizacja (prywatne);
+    ekstrakcja nigdy nie nadpisuje numerów ręcznych. Ekstrakcja z dokumentów już pobranych (analiza / Decision Maker Finder) — bez nowego crawla.
+  * Apollo Phone Enrichment wyłącznie po świadomym potwierdzeniu (okno + nieznany koszt), nigdy automatycznie ani zbiorczo; bez e-maili
+    (`reveal_personal_emails=false`), bez automatycznego ponawiania płatnego zapytania. LOCKED tylko po potwierdzeniu przez źródło;
+    AVAILABLE tylko z prawdziwym numerem. Test ręczny: `wp ubr apollo-phone-test` (domyślnie bez zapytania).
+  * Gotowość do telefonu: zmieniaj jednocześnie `CallReadiness::classify()` i `CallFilters::readiness()` (test porównuje).
+  * Przejęcie firmy tylko przez `OwnershipService` (atomowy warunkowy UPDATE); zmiana cudzego opiekuna wymaga `prospects.transfer`.
+    Zakaz kontaktu blokuje akcje kontaktowe i wyklucza z kolejek / priorytetów (`ActionPriorityEngine`, `QueueCatalog::ready_to_call`).
+  * Historia kontaktu = istniejące `ubr_prospect_activities` (wynik w `outcome`); kliknięcie `tel:` nic nie zapisuje; brak dialera.
+  * Listy Discover / Prospects: komórki i akcje wyłącznie z `partials/call/*` (bez kopii), linki telefonu przez `$store.ubr.safeTel()`.
+  * Produkcja / LocalWP to MySQL 8.4, kontener to MariaDB — nazwy kolumn sprawdzaj pod kątem słów zastrzeżonych MySQL 8
+    (np. `manual`, `rank`, `groups`, `lateral`, `qualify`) i cytuj je w SQL; migracja z błędem zostawia nowy kod bez tabel.
+  * Testy: `tests/calling-p10.php` (w `tests/run.php`).
+- Direct Decision Maker Phones (Prompt 10.2, ARCHITECTURE §18) — zasady:
+  * Numer jest numerem OSOBY tylko z dowodem (`PersonPhoneExtractor`): VERIFIED = jedna osoba z imieniem, nazwiskiem i stanowiskiem
+    w tym samym małym bloku HTML co numer (karta, wiersz tabeli, akapit) albo indywidualna podstrona osoby; LIKELY = bez stanowiska
+    lub lista płaska; UNCERTAIN = do ręcznej weryfikacji (nigdy pokazywany jako telefon decydenta); REJECTED = numer firmy / oddziału /
+    stopki, etykieta działu („Sekretariat:”, „Dział sprzedaży:”) albo ten sam numer przy kilku osobach. Samo nazwisko na stronie,
+    numer w stopce czy numer działu NIE wiążą numeru z osobą.
+  * Powiązania w `ubr_contact_phone_links`: `org_key = 0` automat (wspólne), `org_key = organizacja` decyzja (potwierdź / odrzuć /
+    przypisz / usuń) — wygrywa z automatem, nigdy nie nadpisywana ekstrakcją (`upsertAuto` pomija evidence MANUAL_*). Usunięcie
+    powiązania nie usuwa numeru firmy. SQL powiązań tylko przez `CallFilters::link()` (efektywny status dla organizacji).
+  * READY_DIRECT = powiązanie VERIFIED (lub numer z Apollo) osoby z rolą decydenta; LIKELY bez numeru firmy = RESEARCH.
+    Zmieniaj jednocześnie `CallReadiness::classify()` i `CallFilters::readiness()`.
+  * Dopasowanie osób: ta sama firma + klucz imienia i nazwiska (`PersonName::key`) — bez „podobnych” nazwisk. Nowa osoba tylko
+    z rolą decydenta (`CallReadiness::DECISION_ROLES`) z oficjalnej strony przez `DecisionMakerFinderService::persistWebsiteCandidate`
+    (telefon NIE wchodzi do Contact Priority Score). Pobrania: strony źródłowe numerów (maks. 3) + maks. 2 podstrony zarząd/zespół,
+    robots.txt, PageFetcher, blokada 10 min na firmę, limit dzienny organizacji. Bez Apollo.
+  * Apollo People Search: jeden kontrolowany test `POST /integrations/apollo/people-test` (potwierdzenie, owner/admin, 1/h, bez zapisu).
+  * Testy: `tests/dm-phones-p102.php`.
+- Apollo Contact Matching & Phone Unlock (Prompt 10.3, ARCHITECTURE §19):
+  * Kandydaci `ubr_apollo_people` (wspólni), dopasowania `ubr_apollo_matches` (PRYWATNE dla organizacji) + historia. Identyfikator Apollo
+    kontaktu = dopasowanie APPROVED (`ApolloContactService::apolloIdFor`) — używaj tej metody zamiast `contacts.external_id`.
+  * Maska nazwiska („Dr***z”) nigdy nie daje EXACT; nie odtwarzaj nazwisk. Decyzji użytkownika nie nadpisuj (`rematch` zmienia tylko
+    propozycje). Konflikt identyfikatorów = 409.
+  * Zapytanie People API Search wyłącznie z `search()` (zgoda `confirm`, flaga, cache, limity) — nigdy przy renderowaniu list / karty.
+    Identyfikatory Apollo nie trafiają do odpowiedzi REST.
+  * Płatne odblokowanie: `UBR_APOLLO_PHONE_ENABLED` (domyślnie wyłączone) sprawdzane w preflight i ponownie w `request()`.
+  * Testy: `tests/apollo-matching-p103.php` (mocki). Następna migracja: M013 (wdrożone M001–M012).
 - UWAGA BEZPIECZEŃSTWO: prywatny klucz SSH `key` (+ `key.pub`) był śledzony w repozytorium (commit `9b24093`); 10.10.2026 usunięty z drzewa
   (`git rm`, bez commita) — nadal jest w historii, wymaga unieważnienia. Nie czytać, nie używać, nie przywracać, nie dodawać do paczek. Plan rotacji i usunięcia z historii: `docs/SECURITY-KEY.md`
   (przepisanie historii Git tylko za zgodą właściciela). Nowe sekrety (ClickUp, klucz szyfrowania) wyłącznie w `wp-config.php`.

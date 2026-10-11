@@ -112,6 +112,9 @@ class DecisionMakerFinderService
 				}
 			}
 
+			// Telefony firmy z tych samych stron (bez dodatkowych zapytań) — numery FIRMY, nie przypisywane osobom.
+			app(CompanyPhoneService::class)->fromDocuments((int) $company['id'], array_map(fn ($d) => ['html' => $d['html'], 'url' => $d['url'], 'kind' => in_array($d['kind'], ['home', 'contact'], true) ? $d['kind'] : 'other'], $crawl['docs']));
+
 			$checked = count(array_filter($pages, fn ($p) => $p['status'] !== null));
 
 			if ($crawl['docs'] === []) {
@@ -125,7 +128,8 @@ class DecisionMakerFinderService
 		}
 
 		// C) Apollo People Search (przygotowane, domyślnie wyłączone).
-		$apollo = $this->apollo->search($domain, isset($run['organization_id']) ? (int) $run['organization_id'] : null);
+		$apolloOrg = app(\App\Ubr\Infrastructure\Database\Db::class)->value("SELECT external_id FROM " . app(\App\Ubr\Infrastructure\Database\Db::class)->table(\App\Ubr\Infrastructure\Database\Tables::COMPANY_EXTERNAL_IDS) . " WHERE company_id = %d AND provider = 'apollo' LIMIT 1", (int) $company['id']);
+		$apollo = $this->apollo->search($domain, isset($run['organization_id']) ? (int) $run['organization_id'] : null, $apolloOrg ? (string) $apolloOrg : null);
 		$apolloStatus = ApolloPeopleSource::status();
 		$sources['apollo'] = $apollo['error']
 			? ['state' => 'error', 'message' => $apollo['error']]
@@ -235,6 +239,11 @@ class DecisionMakerFinderService
 
 		if ($status !== 'failed') {
 			$this->syncCompany((int) $company['id'], $runId, $status, $ranked, array_values($channels));
+
+			// Prompt 10.2: telefony osób z tych samych stron (bez dodatkowych zapytań) — powiązania z dowodem.
+			if (! empty($crawl['docs'])) {
+				app(DecisionPhoneService::class)->fromDocuments((int) $company['id'], array_map(fn ($d) => ['html' => $d['html'], 'url' => $d['url']], $crawl['docs']));
+			}
 		} else {
 			$this->companies->update((int) $company['id'], ['contacts_status' => 'failed', 'last_contact_run_id' => $runId]);
 		}
@@ -246,7 +255,7 @@ class DecisionMakerFinderService
 	 * @param array<string, mixed> $c
 	 * @param list<array<string, mixed>> $changes
 	 */
-	private function persist(int $companyId, int $runId, array $c, array &$changes): int
+	private function persist(int $companyId, ?int $runId, array $c, array &$changes): int
 	{
 		$now = Db::now();
 		$data = [
@@ -275,6 +284,9 @@ class DecisionMakerFinderService
 			'source_url' => UrlGuard::httpUrl($c['sources'][0]['source_url'] ?? null) ? mb_substr((string) $c['sources'][0]['source_url'], 0, 500) : null,
 			'source_observed_at' => $now,
 			'last_verified_at' => $now,
+			// Identyfikator osoby u źródła (np. Apollo) — dowód powiązania i warunek odblokowania telefonu.
+			'external_provider' => ! empty($c['external_id']) ? (string) ($c['external_provider'] ?? 'apollo') : null,
+			'external_id' => ! empty($c['external_id']) ? mb_substr((string) $c['external_id'], 0, 64) : null,
 			'rank_position' => $c['rank_position'] ?? null,
 			'rank_reason' => $c['rank_reason'] ?? null,
 			'needs_review' => $c['needs_review'] ? 1 : 0,
@@ -314,6 +326,41 @@ class DecisionMakerFinderService
 		$this->contacts->addHistory($id, $runId, $data);
 
 		return $id;
+	}
+
+	/**
+	 * Prompt 10.2: osoba znaleziona na oficjalnej stronie firmy przy wyszukiwaniu telefonów decydentów — ta sama ścieżka
+	 * co w pełnym wyszukiwaniu (deduplikacja po kluczu osoby, weryfikacja, confidence, Contact Priority Score), bez
+	 * rankingu (pozycja ustalana przy widoku / kolejnym wyszukiwaniu). Telefon NIE jest przekazywany do oceny — znaleziony
+	 * numer nie zmienia Contact Priority Score (numer zapisuje się wyłącznie jako powiązanie z dowodem).
+	 *
+	 * @param array<string, mixed> $company
+	 * @param array<string, mixed> $candidate kandydat w formacie PeopleExtractor (name, title, role, source_*, excerpt)
+	 * @return array{id: int, created: bool}
+	 */
+	public function persistWebsiteCandidate(array $company, array $candidate): array
+	{
+		$candidate = ['email' => null, 'role_email' => null, 'phone' => null, 'profile' => null, 'former' => false, 'other_entity' => null] + $candidate;
+		$c = $this->merger->merge([$candidate])[0];
+		$existing = $this->contacts->findByKey((int) $company['id'], 0, (string) $c['person_key']);
+
+		if ($existing) {
+			return ['id' => (int) $existing['id'], 'created' => false];
+		}
+
+		$c = $this->verifier->verify($c, $company, null);
+		$conf = $this->confidence->assess($c, null, false);
+		$score = $this->calculator->score($c, $conf, $company, false);
+		$c['confidence'] = $conf;
+		$c['confidence_level'] = $conf['level'];
+		$c['contact_priority_score'] = $score['score'];
+		$c['score_status'] = $score['status'];
+		$c['score_breakdown'] = $score['breakdown'];
+		$c['rank_position'] = null;
+		$c['rank_reason'] = null;
+		$changes = [];
+
+		return ['id' => $this->persist((int) $company['id'], null, $c, $changes), 'created' => true];
 	}
 
 	/**
