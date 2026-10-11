@@ -120,7 +120,8 @@ final class CallFilters
 	public static function readiness(string $org): string
 	{
 		// Prompt 10.2: numer decydenta tylko „prawdopodobny” (bez numeru firmy) = dane do sprawdzenia (RESEARCH).
-		return 'CASE WHEN ' . self::blocked() . " THEN 'BLOCKED' WHEN " . self::direct($org) . " THEN 'READY_DIRECT' WHEN " . self::company($org) . " THEN 'CALL_COMPANY' WHEN " . self::uncertain() . ' OR ' . self::link($org, ['LIKELY']) . " THEN 'RESEARCH' ELSE 'FIND_PHONE' END";
+		// Prompt 10.4: nieaktywna w rejestrze → BLOCKED; strona innego podmiotu (MISMATCH) → RESEARCH (nigdy „gotowa”).
+		return 'CASE WHEN ' . self::blocked() . " OR c.verification_status IN ('inactive', 'suspended') THEN 'BLOCKED' WHEN c.domain_status = 'mismatch' THEN 'RESEARCH' WHEN " . self::direct($org) . " THEN 'READY_DIRECT' WHEN " . self::company($org) . " THEN 'CALL_COMPANY' WHEN " . self::uncertain() . ' OR ' . self::link($org, ['LIKELY']) . " THEN 'RESEARCH' ELSE 'FIND_PHONE' END";
 	}
 
 	/** Osoba z bezpośrednim numerem (potwierdzonym przed prawdopodobnym) do pokazania na liście. */

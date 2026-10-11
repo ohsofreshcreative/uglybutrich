@@ -343,6 +343,18 @@ Szczegóły: ARCHITECTURE.md §19, `docs/QA-REPORT.md` §13. Migracja M012 (sche
 
 **NOT VERIFIED:** rzeczywiste People Enrichment / Phone Enrichment (płatne — zablokowane), koszt na koncie, znaczenie pola `has_direct_phone` (nieudokumentowane).
 
+## Etap 10.4 — Performance Optimization & Progressive Discovery (11.10.2026)
+
+Szczegóły: ARCHITECTURE.md §20, `docs/QA-REPORT.md` §14. Migracja M013 (schemat v13). Scoringi bez zmian.
+
+**Zrobione:** weryfikacja zlecana po każdej stronie wyników (Progressive Discovery), okno firm w kroku weryfikacji z równoległym pobieraniem stron jednym procesem (curl_multi) i kolejnością wg gotowości, wykorzystanie przerw limitów rejestrów na transfery, atomowy limit częstotliwości dostawców, wspólna pamięć podręczna stron (M013) z zapamiętywaniem niedostępnych serwerów, numery firmy już przy weryfikacji, statusy etapów w Discover (weryfikacja / WWW / telefony / decydent), lekkie odświeżanie zmienionych wierszy, rzadsze sprawdzanie kolejki przy statusie, gotowość: nieaktywne → BLOCKED, niezgodność domeny → RESEARCH, usunięte linki tel: i przycisk „Zadzwoń”.
+
+**Pomiary (kontener, mocki):** 50 firm 151,5 s → 83,4 s, 10 firm 31,6 s → 18,8 s, te same wyniki i liczba zapytań; DM Finder po weryfikacji 2,1 s → 1,2 s.
+
+**Testy:** PHP 1222/1222, JS 18/18 + 5/5 + 19/19 + 35/35, Playwright 58/58 (nowe) + 76/76 + 55/55 + 71/71 w kontenerze.
+
+**LocalWP:** zob. `docs/QA-REPORT.md` §14.4.
+
 ## Następny etap
 
 Przed wdrożeniem na Hostinger: unieważnienie klucza SSH i commit jego usunięcia (`docs/SECURITY-KEY.md`), sprawdzenie wymagań serwera i konfiguracji produkcyjnej (`docs/DEPLOYMENT.md`), decyzja o Website Analyzerze na Hostingerze (VPS / osobny renderer / tryb PARTIAL). Do decyzji: zmiany scoringu D12/D13 z raportu QA, retencja logów, ClickUp Live (lista kontrolna w QA-REPORT §10), Apollo People Search, klucze CEIDG/GUS.

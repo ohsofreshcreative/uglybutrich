@@ -89,6 +89,11 @@ document.addEventListener('alpine:init', () => {
     },
     verificationBadge: (v) =>
       ({ verified: 'ubr-badge-confirmed', uncertain: 'ubr-badge-uncertain', inactive: 'ubr-badge-danger', suspended: 'ubr-badge-danger' })[v] || 'ubr-badge-unavailable',
+    // Prompt 10.4 — statusy etapów przetwarzania firmy (Discover): odznaka weryfikacji i kropki pozostałych etapów.
+    stageBadge: (tone) =>
+      ({ good: 'ubr-badge-confirmed', warn: 'ubr-badge-uncertain', danger: 'ubr-badge-danger', active: 'ubr-badge-declared', info: 'ubr-badge-declared' })[tone] || 'ubr-badge-unavailable',
+    stageDot: (tone) =>
+      ({ good: 'bg-money', warn: 'bg-gold', danger: 'bg-danger', active: 'bg-ink-soft animate-pulse', info: 'bg-ink-soft' })[tone] || 'bg-ink-muted/40',
     domainBadge: (v) =>
       ({ confirmed: 'ubr-badge-confirmed', uncertain: 'ubr-badge-uncertain', mismatch: 'ubr-badge-danger', unavailable: 'ubr-badge-danger' })[v] || 'ubr-badge-unavailable',
     can,
@@ -604,6 +609,8 @@ document.addEventListener('alpine:init', () => {
     verifyBusy: false,
     timer: null,
     resultsTimer: null,
+    refreshing: false,
+    refreshAgain: null,
 
     get canAnalyze() {
       return can('analysis.run');
@@ -637,13 +644,45 @@ document.addEventListener('alpine:init', () => {
         await this.loadResults(this.results.page || 1, true);
       }
     },
-    /** Odświeżaj wyniki, dopóki któraś analiza na stronie jest w kolejce / w toku. */
+    /**
+     * Prompt 10.4 — dopóki któryś etap firm na stronie jest w toku (weryfikacja, telefony, analiza, decydenci, ocena),
+     * odświeżaj LEKKO: tylko zmienione wiersze widocznej strony (bez ponownego pobierania listy, bez migotania,
+     * z zachowaniem filtrów, sortowania, rozwiniętych wierszy i pozycji przewijania).
+     */
     watchAnalyses() {
       clearTimeout(this.resultsTimer);
-      if (this.results.items.some((c) => ['queued', 'running'].includes(c.analysis?.status) || ['queued', 'running'].includes(c.contacts?.status) || c.lead?.pending)) {
-        this.resultsTimer = setTimeout(async () => {
-          await this.loadResults(this.results.page || 1, true);
-        }, 6000);
+      const busy = (c) => ['queued', 'running'].includes(c.analysis?.status) || ['queued', 'running'].includes(c.contacts?.status) || c.lead?.pending
+        || ['pending', 'running'].includes(c.stages?.verification?.key) || ['pending', 'running'].includes(c.stages?.phones?.key);
+      if (this.results.items.some(busy)) {
+        this.resultsTimer = setTimeout(() => this.refreshChanged(), 4000);
+      }
+    },
+
+    /** Lekkie odświeżenie: wiersze widocznej strony zmienione od ostatniego odświeżenia (`all` — wszystkie widoczne). */
+    async refreshChanged(all = false) {
+      if (!this.search || !this.results.items.length) return;
+      if (this.refreshing) {
+        this.refreshAgain = this.refreshAgain || (all ? 'all' : 'changed'); // nie gubimy odświeżenia po akcji użytkownika
+        return;
+      }
+      this.refreshing = true;
+      try {
+        const data = await api(`/discovery/searches/${this.search.id}/results`, {
+          query: { ids: this.results.items.map((c) => c.id).join(','), changed_since: all ? '' : this.results.server_time || '', per_page: 100, filter: this.resultFilter, sort: this.resultSort, ...this.analysisFilters, ...this.contactFilters, ...this.leadFilters, ...this.callFilters },
+        });
+        if (data.server_time) this.results.server_time = data.server_time;
+        for (const row of data.items || []) {
+          const i = this.results.items.findIndex((c) => c.id === row.id);
+          if (i >= 0) this.results.items.splice(i, 1, row);
+        }
+      } catch (e) {
+        // ciche — kolejne odświeżenie spróbuje ponownie
+      } finally {
+        this.refreshing = false;
+        const again = this.refreshAgain;
+        this.refreshAgain = null;
+        if (again) this.refreshChanged(again === 'all');
+        else this.watchAnalyses();
       }
     },
 
@@ -702,14 +741,14 @@ document.addEventListener('alpine:init', () => {
         const row = this.results.items.find((c) => c.id === e.detail.companyId);
         if (row) row.prospect_id = e.detail.prospectId;
       });
-      window.addEventListener('ubr:company-verified', () => this.search && this.loadResults(this.results.page || 1, true));
+      window.addEventListener('ubr:company-verified', () => this.search && this.refreshChanged(true));
       window.addEventListener('ubr:analysis-queued', () => this.search && this.loadResults(this.results.page || 1, true));
-      window.addEventListener('ubr:analysis-finished', () => this.search && this.loadResults(this.results.page || 1, true));
+      window.addEventListener('ubr:analysis-finished', () => this.search && this.refreshChanged(true));
       window.addEventListener('ubr:contacts-queued', () => this.search && this.loadResults(this.results.page || 1, true));
-      window.addEventListener('ubr:contacts-finished', () => this.search && this.loadResults(this.results.page || 1, true));
-      window.addEventListener('ubr:lead-changed', () => this.search && this.loadResults(this.results.page || 1, true));
-      window.addEventListener('ubr:calling-changed', () => this.search && this.loadResults(this.results.page || 1, true));
-      window.addEventListener('ubr:pipeline-changed', () => this.search && this.loadResults(this.results.page || 1, true));
+      window.addEventListener('ubr:contacts-finished', () => this.search && this.refreshChanged(true));
+      window.addEventListener('ubr:lead-changed', () => this.search && this.refreshChanged(true));
+      window.addEventListener('ubr:calling-changed', () => this.search && this.refreshChanged(true));
+      window.addEventListener('ubr:pipeline-changed', () => this.search && this.refreshChanged(true));
     },
 
     destroy() {
@@ -743,12 +782,16 @@ document.addEventListener('alpine:init', () => {
     async poll(id, first = false) {
       try {
         const previousCount = this.search?.id === id ? this.search.results_count : -1;
+        const wasActive = this.search?.id === id && this.isActive;
         this.search = await api(`/discovery/searches/${id}`);
         const entry = this.history.find((s) => s.id === id);
         if (entry) Object.assign(entry, { status: this.search.status, results_count: this.search.results_count });
 
-        if (first || this.search.results_count !== previousCount || !this.isActive) {
+        // Nowe firmy (lub koniec wyszukiwania) → lista; inaczej tylko lekkie odświeżenie zmienionych wierszy.
+        if (first || this.search.results_count !== previousCount || (wasActive && !this.isActive)) {
           await this.loadResults(this.results.page || 1, true);
+        } else {
+          await this.refreshChanged();
         }
       } catch (e) {
         this.$store.ubr.error(e);
@@ -759,11 +802,8 @@ document.addEventListener('alpine:init', () => {
       if (this.isActive) {
         this.timer = setTimeout(() => this.poll(id), 2500);
       } else if (this.verifying) {
-        // Wyszukiwanie gotowe, weryfikacja w tle trwa — odświeżaj rzadziej, razem z wynikami (statusy, trafność).
-        this.timer = setTimeout(async () => {
-          await this.poll(id);
-          await this.loadResults(this.results.page || 1, true);
-        }, 6000);
+        // Wyszukiwanie gotowe, weryfikacja w tle trwa — status (panel weryfikacji) co 6 s; wiersze odświeża lekko poll().
+        this.timer = setTimeout(() => this.poll(id), 6000);
       }
     },
 

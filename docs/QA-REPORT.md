@@ -422,3 +422,58 @@ nie jest zgodą na kontakt marketingowy (status „Nie kontaktować” blokuje p
 Kontrola rozbieżności wykonana: wszystkie pliki motywu na LocalWP poza 20 zmienianymi w tym etapie są identyczne z kontenerem
 (537 sum kontrolnych), zmieniane pliki nie były edytowane po wdrożeniu 10.2. Paczka wdrożeniowa i skrypty (kopia bazy, walidacja z cache bez
 zapytań do Apollo) przygotowane; wdrożenie i migracja M012 czekają na uruchomienie strony.
+
+## 14. Prompt 10.4 — Performance Optimization & Progressive Discovery (11.10.2026)
+
+Środowisko pomiarów: **kontener**, prawdziwy pipeline (serwer PHP z 3 workerami, workery tła przez loopback, MariaDB) z
+**mockami** opóźnień: Apollo 1,2 s / zapytanie, strona główna 0,8 s, podstrona 0,5 s, KRS / biała lista VAT 0,35 s
+(+ rzeczywiste limity częstotliwości 1,1 s / 1,5 s), co 10. strona nie odpowiada (timeout 7 s). Firmy i rejestry fikcyjne
+(`*.perf.ubrtest.pl`, usunięte po pomiarach). **To nie są pomiary produkcyjne** — LocalWP był niedostępny (§14.4).
+
+### 14.1 Co spowalniało (BEFORE, zmierzone)
+- Weryfikacja firm sekwencyjna, a strona WWW każdej firmy pobierana w trakcie jej weryfikacji — niedostępna strona
+  zajmowała ~14 s (https 7 s + http 7 s) i blokowała wszystkie kolejne firmy (5 takich stron = ~70 s z 151 s dla 50 firm).
+- Weryfikacja startowała dopiero po zakończeniu całego wyszukiwania (przy wielu stronach wyników — opóźnienie pierwszej
+  zweryfikowanej firmy).
+- Ta sama strona główna pobierana do 3× (weryfikacja, odświeżenie numerów, Decision Maker Finder) — brak wspólnego cache.
+- Numery firmy dopiero po ręcznym odświeżeniu / analizie (0 numerów po weryfikacji).
+- Lista: po zakończeniu wyszukiwania przy trwającej weryfikacji pełna strona wyników pobierana 2× co 6 s; zdarzenia
+  z karty firmy przeładowywały całą stronę listy; `QueueMonitor::recover` przy każdym odpytaniu statusu (co 2,5 s).
+- Limit częstotliwości dostawców nieatomowy (dwa procesy mogły wysłać zapytanie jednocześnie).
+
+### 14.2 BEFORE / AFTER (kontener, mocki — czasy od zlecenia wyszukiwania)
+| Pomiar | BEFORE | AFTER | Status |
+|---|---|---|---|
+| Pierwszy wynik na liście (10 / 50 firm) | 1,75 s / 2,68 s | 1,74 s / 1,91 s | PASSED (bez zmian — już wcześniej natychmiast) |
+| Pierwsza zweryfikowana firma (10 / 50) | 3,48 s / 3,86 s | 3,52 s / 3,66 s | PASSED (bez zmian — dominuje 1. zapytanie do rejestru) |
+| Przetworzenie 10 firm | 31,6 s | 18,8 s (−41%) | PASSED |
+| Przetworzenie 50 firm | 151,5 s | 83,4 s (−45%) | PASSED |
+| Wynik weryfikacji 50 firm | 45 VERIFIED, 5 UNCERTAIN | 45 VERIFIED, 5 UNCERTAIN (identyczny) | PASSED |
+| Zapytania HTTP (50 firm: Apollo / strony / rejestry) | 1 / 75 / 90 | 1 / 75 / 90 (bez dodatkowych) | PASSED |
+| Numery firmy po samej weryfikacji (50 firm) | 0 | 22 firmy (bez dodatkowych zapytań) | PASSED |
+| Decision Maker Finder po weryfikacji (3 firmy) | 2,1 s, 3 zapytania / firmę | 1,2 s, 1 zapytanie / firmę | PASSED |
+| Ponowne pobrania tej samej strony (weryfikacja → odświeżenie → DM Finder) | strona główna 3×, Kontakt 2–3× | DM Finder z cache; „Odśwież numery” świadomie pobiera świeżo | PASSED |
+| Ręczne „Odśwież numery” | 1,85 s, 3 zapytania | 1,85 s, 3 zapytania (celowo bez cache) | PASSED |
+| API listy Discover, 25 wierszy (mediana) | 36–42 ms, 95 KB | 42–50 ms (status kolejki + etapy), 95 KB | PASSED |
+| Lekkie odświeżenie listy (bez zmian) | — (pełna strona 95 KB co 6 s, 2×) | 32–35 ms, 0,1 KB | PASSED |
+| Odpytanie statusu wyszukiwania | recover przy każdym (co 2,5 s) | recover maks. co 10 s; 32–37 ms | PASSED |
+| Wyszukiwanie w prawdziwym Apollo / rejestrach / na prawdziwych stronach | — | — | NOT TESTED (bez płatnych zapytań; LocalWP niedostępny) |
+
+Dolna granica czasu weryfikacji to limity rejestrów (biała lista VAT 1,5 s między zapytaniami) — 50 firm ≈ 75 s minimum.
+
+### 14.3 Testy
+| Zestaw | Wynik | Status |
+|---|---|---|
+| PHP `tests/run.php` (pełna regresja, w tym Apollo P10.3 i ClickUp) | **1222/1222** (+48 testów w nowym `tests/performance-p104.php`) | PASSED (kontener) |
+| curl_multi na prawdziwym serwerze HTTP (127.0.0.1, 6 workerów): równoległość, przekierowanie, limit rozmiaru 600 KB, timeout → wpis „serwer nie odpowiada” | szybka strona 0,21 s przy wolnej 1,2 s; 5 adresów łącznie 2,0 s | PASSED (kontener) |
+| JS | 18/18 · 5/5 · 19/19 · 35/35 | PASSED |
+| Playwright P10.4 (Discover / Prospects / Dashboard × 1920 / 1440 / 1280 / 768 / 390: statusy etapów, brak tel: / „Zadzwoń”, bez poziomego przewijania; lekkie odświeżenie bez migotania — ten sam element wiersza, rozwinięte szczegóły i przewinięcie zachowane; sortowanie zachowane; kopiowanie numeru) | **58/58** | PASSED (kontener) |
+| Playwright regresja P10.3 / P10.2 / P10 | **76/76** · **55/55** · **71/71** (testy tel: zamienione na „brak tel:, numer widoczny i kopiowany”) | PASSED (kontener) |
+
+### 14.4 Walidacja na LocalWP
+<!-- P104-LOCALWP -->
+**BLOCKED (11.10.2026):** strona `uglybutirch.local` nie odpowiadała przez cały etap (aplikacja Local zatrzymana; ostatni wpis w logu PHP
+strony — 08:13 UTC). Pliki: **PASSED** — przed kopiowaniem kontrola rozbieżności z wdrożonym stanem 10.3 (brak zmian spoza wdrożenia,
+zmian 10.3 nie nadpisano), po kopiowaniu 572/572 plików motywu (app, resources, routes, tests, docs, config, public/build) zgodnych
+sumą MD5 z kontenerem. Migracje M012 i M013 wykonają się automatycznie przy pierwszym wejściu na stronę — niezweryfikowane (NOT TESTED).
+Widoki 1920/1440/1280/768/390, workery, statusy etapów i pomiary na LocalWP — NOT TESTED.

@@ -3,6 +3,7 @@
 namespace App\Ubr\Infrastructure\Http;
 
 use App\Ubr\Domain\Discovery\ProviderException;
+use App\Ubr\Support\Lock;
 
 /**
  * Klient HTTP dla dostawców: limity częstotliwości, klasyfikacja błędów (retry / brak retry), JSON.
@@ -103,6 +104,9 @@ class ProviderHttpClient
 
 	/**
 	 * Minimalny odstęp między zapytaniami do jednego dostawcy (wspólny dla wszystkich procesów).
+	 * Prompt 10.4: atomowo (blokada MySQL na czas odczytu i zapisu znacznika — dwa procesy nie wyślą zapytania
+	 * w tej samej chwili), a czas oczekiwania może być wykorzystany na inne transfery (`ubr/http/idle`, np. pobieranie
+	 * stron kolejnych firm w tle w czasie przerwy między zapytaniami do rejestrów).
 	 */
 	private function throttle(string $provider, int $minIntervalMs): void
 	{
@@ -110,14 +114,42 @@ class ProviderHttpClient
 			return;
 		}
 
-		$key = 'ubr_rl_' . $provider;
-		$last = (float) get_transient($key);
-		$waitMs = (int) ceil(($last + $minIntervalMs / 1000 - microtime(true)) * 1000);
+		$lock = 'rl_' . $provider;
+		$locked = Lock::acquireWait($lock, 12);
 
-		if ($waitMs > 0) {
-			usleep(min($waitMs, 10000) * 1000);
+		try {
+			$key = 'ubr_rl_' . $provider;
+			wp_cache_delete('_transient_' . $key, 'options'); // świeży odczyt (inny proces mógł zapisać znacznik)
+			$last = (float) get_transient($key);
+			$waitMs = (int) ceil(($last + $minIntervalMs / 1000 - microtime(true)) * 1000);
+
+			if ($waitMs > 0) {
+				self::idle(min($waitMs, 10000));
+			}
+
+			set_transient($key, (string) microtime(true), 3600);
+		} finally {
+			if ($locked) {
+				Lock::release($lock);
+			}
+		}
+	}
+
+	/**
+	 * Oczekiwanie `$ms` — z możliwością wykorzystania czasu przez inne zadania (`ubr/http/idle`, sekundy).
+	 */
+	public static function idle(int $ms): void
+	{
+		$end = microtime(true) + $ms / 1000;
+
+		if (has_action('ubr/http/idle')) {
+			do_action('ubr/http/idle', $ms / 1000);
 		}
 
-		set_transient($key, (string) microtime(true), 3600);
+		$left = $end - microtime(true);
+
+		if ($left > 0) {
+			usleep((int) ($left * 1e6));
+		}
 	}
 }

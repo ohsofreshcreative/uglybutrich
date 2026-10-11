@@ -202,15 +202,29 @@ class ResultRepository
 			default => '',
 		};
 
+		// Prompt 10.4 — lekkie odświeżanie listy: tylko wskazane (widoczne) firmy i tylko zmienione od `changed_since`.
+		$changesOnly = ! empty($extra['ids']);
+
+		if ($changesOnly) {
+			$ids = array_slice(array_values(array_unique(array_filter(array_map('intval', (array) $extra['ids'])))), 0, 100);
+			$where .= ' AND r.company_id IN (' . ($ids ? implode(',', $ids) : '0') . ')';
+
+			if (! empty($extra['changed_since']) && preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', (string) $extra['changed_since'])) {
+				$where .= ' AND (c.updated_at >= %s OR vq.updated_at >= %s OR li.updated_at >= %s OR p.updated_at >= %s)';
+				array_push($args, $extra['changed_since'], $extra['changed_since'], $extra['changed_since'], $extra['changed_since']);
+			}
+		}
+
 		$from = "{$this->db->table(Tables::RESULTS)} r
 			INNER JOIN {$this->db->table(Tables::COMPANIES)} c ON c.id = r.company_id
-			LEFT JOIN {$this->db->table(Tables::PROSPECTS)} p ON p.company_id = r.company_id AND p.organization_id = r.organization_id"
+			LEFT JOIN {$this->db->table(Tables::PROSPECTS)} p ON p.company_id = r.company_id AND p.organization_id = r.organization_id
+			LEFT JOIN {$this->db->table(Tables::VERIFICATION_QUEUE)} vq ON vq.company_id = r.company_id"
 			. LeadFilters::join('r.company_id', 'r.organization_id', $this->db->table(Tables::LEAD_INTELLIGENCE));
 
-		$total = (int) $this->db->value("SELECT COUNT(*) FROM {$from} WHERE {$where}", ...$args);
+		$total = $changesOnly ? 0 : (int) $this->db->value("SELECT COUNT(*) FROM {$from} WHERE {$where}", ...$args);
 
 		$items = $this->db->rows(
-			"SELECT c.*, r.provider, r.matched_terms, r.relevance_score, r.relevance, r.location_match, p.id AS prospect_id, " . LeadFilters::select() . "
+			"SELECT c.*, r.provider, r.matched_terms, r.relevance_score, r.relevance, r.location_match, p.id AS prospect_id, vq.status AS vq_status, " . LeadFilters::select() . "
 			FROM {$from}
 			WHERE {$where}
 			ORDER BY {$this->orderBy($sort)}

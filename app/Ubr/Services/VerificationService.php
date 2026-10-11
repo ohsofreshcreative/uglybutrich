@@ -43,10 +43,22 @@ class VerificationService
 	 */
 	public function enqueueForSearch(int $searchId, int $organizationId, ?int $userId = null, int $priority = 5, bool $force = false): int
 	{
+		return $this->enqueueCompanies($this->results->companyIdsForSearch($searchId), $organizationId, $searchId, $userId, $priority, $force);
+	}
+
+	/**
+	 * Prompt 10.4 — zlecenie weryfikacji wskazanych firm (np. zaraz po zapisaniu strony wyników Discovery, bez czekania
+	 * na koniec całego wyszukiwania). Świeżo zweryfikowane są pomijane; kolejka bez duplikatów (UNIQUE company_id).
+	 *
+	 * @param list<int> $companyIds
+	 * @return int liczba dodanych do kolejki
+	 */
+	public function enqueueCompanies(array $companyIds, int $organizationId, ?int $searchId = null, ?int $userId = null, int $priority = 5, bool $force = false): int
+	{
 		$threshold = gmdate('Y-m-d H:i:s', time() - self::FRESH_DAYS * DAY_IN_SECONDS);
 		$count = 0;
 
-		foreach ($this->results->companyIdsForSearch($searchId) as $companyId) {
+		foreach (array_values(array_unique(array_map('intval', $companyIds))) as $companyId) {
 			$c = $this->companies->find($companyId);
 
 			if (! $c) {
@@ -57,6 +69,12 @@ class VerificationService
 
 			if ($fresh && ! $force) {
 				continue;
+			}
+
+			$queued = ($force || $priority < 5) ? null : $this->queue->forCompany($companyId);
+
+			if ($queued && in_array($queued['status'], ['queued', 'running'], true)) {
+				continue; // już w kolejce (np. zlecona po wcześniejszej stronie wyników)
 			}
 
 			$this->queue->enqueue($companyId, $organizationId, $userId, $searchId, $priority, $force);

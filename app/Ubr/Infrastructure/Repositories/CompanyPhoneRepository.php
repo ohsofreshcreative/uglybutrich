@@ -92,6 +92,7 @@ class CompanyPhoneRepository
 			'main_phone_type' => $primary['phone_type'] ?? null,
 			'phones_count' => count($rows),
 			'phones_checked_at' => Db::now(),
+			'updated_at' => Db::now(), // Prompt 10.4: lekkie odświeżanie listy Discover wykrywa zmianę
 		], ['id' => $companyId]);
 	}
 

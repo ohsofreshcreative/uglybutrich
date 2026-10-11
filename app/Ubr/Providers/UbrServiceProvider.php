@@ -99,6 +99,8 @@ class UbrServiceProvider extends ServiceProvider
 			$this->safely(fn () => $this->app->make(\App\Ubr\Services\LeadIntelligenceRunner::class)->kick());
 			// Odblokowane telefony (Apollo): odbiór wyników zatwierdzonych zleceń (bez nowych zapytań płatnych).
 			$this->safely(fn () => $this->app->make(\App\Ubr\Services\ApolloPhoneRunner::class)->kick());
+			// Prompt 10.4: usuwanie przeterminowanych wpisów wspólnej pamięci podręcznej stron (porcjami).
+			$this->safely(fn () => $this->app->make(\App\Ubr\Infrastructure\Http\PageCache::class)->purgeExpired(500));
 		});
 
 		// Po migracji 1.2: trafność dla istniejących wyników (bez zapytań zewnętrznych).

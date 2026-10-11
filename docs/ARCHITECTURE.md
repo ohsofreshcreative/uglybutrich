@@ -858,3 +858,58 @@ odblokowanie numeru decydenta — w tym etapie zablokowane po stronie serwera.
 - Karta kontaktu: wiersz „Apollo” przy zatwierdzonym dopasowaniu. Discover / Prospects: sygnał Apollo pod decydentem
   („Apollo: numer bezpośredni dostępny (płatny, nie pobrano)” / „Dostępność telefonu nieznana”) i „Sprawdź Apollo” (karta firmy, odczyt z bazy).
 - Gotowość bez zmian: identyfikator Apollo ani sygnał dostępności bez numeru nie dają READY_DIRECT.
+
+## 20. Performance Optimization & Progressive Discovery (Prompt 10.4)
+
+Cel: firmy widoczne na liście Discover od razu, weryfikacja istnienia w tle bez blokowania przez wolne strony, bez
+dodatkowych zapytań do stron i bez dodatkowego zużycia kredytów Apollo.
+
+### Progressive Discovery
+- Wynik trafia do `ubr_discovery_results` zaraz po zapisaniu firmy (tak było wcześniej) — lista go pokazuje od razu,
+  ze statusem „Oczekuje na weryfikację”.
+- NOWE: firmy z każdej strony wyników dostawcy trafiają do kolejki weryfikacji od razu (`VerificationService::enqueueCompanies`
+  w `DiscoveryRunner::fetchStep`), a nie dopiero po zakończeniu całego wyszukiwania. Zakończenie wyszukiwania tylko uzupełnia
+  kolejkę (firmy już w kolejce pomijane, bez duplikatów — UNIQUE `company_id`).
+
+### Weryfikacja: okno firm + równoległe pobieranie stron (jeden proces)
+- `VerificationRunner::tick` trzyma do `UBR_VERIFY_BATCH` (domyślnie 6) firm „w toku”. Ich strony pobiera `ParallelFetcher`
+  (curl_multi w tym samym procesie PHP — LocalWP ma 2 procesy PHP-FPM, hosting współdzielony ogranicza procesy), maks.
+  `UBR_PREFETCH_CONCURRENCY` (domyślnie 6, maks. 12) połączeń, każdy adres i krok przekierowania przez UrlGuard + przypięcie IP.
+- Pobierane są dokładnie te strony, które pobrałaby inspekcja (`WebsiteInspector::nextSubpage` odtwarza jej reguły:
+  strona główna, http przy błędzie https, kolejne podstrony tylko dopóki brak NIP/KRS) — bez dodatkowych zapytań.
+- Weryfikowana jest najpierw firma, której strony są już pobrane; niedostępna strona (timeout) nie blokuje pozostałych.
+- Przerwy wymuszone limitami rejestrów (KRS 1,1 s, biała lista VAT 1,5 s) wykorzystywane na transfery w tle
+  (`ProviderHttpClient::idle` → akcja `ubr/http/idle`). Limit częstotliwości dostawcy atomowy (blokada MySQL `rl_*`).
+- Rejestry nadal sekwencyjnie (limity) — to one wyznaczają dolną granicę czasu (~1,5 s / firmę z NIP).
+- Numery firmy odczytywane od razu po weryfikacji ze stron pobranych do weryfikacji (`CompanyVerifier::extractPhones`,
+  bez nowych zapytań; pomijane przy domenie innego podmiotu, stronie zaparkowanej / niedostępnej).
+
+### Wspólna pamięć podręczna stron (M013, `ubr_page_cache`)
+- `PageCache` + `PageFetcher::hop()` — każdy krok GET (także przekierowanie) przez cache; korzystają: WebsiteInspector
+  (weryfikacja), PageFetcher (Website Analyzer, robots.txt, Decision Maker Finder, telefony decydentów), ParallelFetcher.
+- TTL: 2xx–4xx `UBR_PAGE_CACHE_TTL` (domyślnie 3600 s), 5xx 300 s, błąd połączenia — wpis „serwer nie odpowiada” na 600 s
+  (kolejne moduły nie czekają ponownie na timeout). Odpowiedzi > 2 MB nie są zapisywane; zapis base64(gzip).
+- Tylko anonimowe GET publicznych stron, nagłówki techniczne (bez Set-Cookie) — bez danych organizacji (izolacja zachowana).
+- Odświeżenie: `PageFetcher::fetch($url, $timeout, fresh: true)` — „Odśwież numery” zawsze pobiera aktualną stronę i nadpisuje cache.
+- Czas strony z cache = oryginalny czas pobrania (Analyzer nie zaniża metryk). Sprzątanie: healthcheck `purgeExpired(500)`.
+- Wyłączenie: `define('UBR_PAGE_CACHE', false)` (wtedy też bez równoległego pobierania).
+
+### Statusy etapów (Discover) i gotowość
+- `CompanyPresenter::stages()` → `stages.verification` (Oczekuje / W toku / Zweryfikowana / Niepewna / Niezgodność / Nieaktywna),
+  `stages.website` (Oczekuje / Analizowanie / Gotowe / Błąd / Nie analizowano), `stages.phones` (Oczekuje / Wyszukiwanie /
+  Znaleziono / Nie znaleziono / Błąd), `stages.dm` (Oczekuje / Wyszukiwanie / Znaleziono / Nie znaleziono / Błąd / Nie szukano).
+  Lista dołącza status kolejki weryfikacji (`vq.status`). UI: `partials/discover-stages` (w komórce firmy i na karcie mobilnej).
+- Gotowość: firma nieaktywna / zawieszona w rejestrze → BLOCKED; domena innego podmiotu (MISMATCH) → RESEARCH — nigdy
+  automatycznie w kolejce „gotowe do telefonu” (`CallReadiness::classify` + `CallFilters::readiness`). Scoringi bez zmian.
+
+### Odświeżanie listy
+- `GET /discovery/searches/{id}/results?ids=…&changed_since=…` — tylko wskazane (widoczne) firmy zmienione od czasu
+  `server_time` (companies / kolejka weryfikacji / Lead Intelligence / prospekt); bez COUNT, te same filtry i sortowanie.
+- Front: `refreshChanged()` podmienia zmienione wiersze w miejscu (bez migotania, zachowane filtry, sortowanie,
+  rozwinięte wiersze i przewinięcie); pełna lista tylko przy nowych firmach lub końcu wyszukiwania. Zdarzenia z karty firmy
+  odświeżają lekko. Status wyszukiwania co 2,5 s w trakcie, co 6 s przy weryfikacji; `QueueMonitor::recover` przy statusie
+  najwyżej co 10 s na wyszukiwanie.
+
+### Bez połączeń telefonicznych
+- Usunięte linki `tel:` i przycisk „Zadzwoń” (Discover, Prospects, karta firmy, karta kontaktu, Action Center). Numery,
+  kopiowanie, źródła, weryfikacja, wynik rozmowy, Cold Call Readiness i pipeline bez zmian.

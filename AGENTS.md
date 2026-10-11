@@ -175,7 +175,18 @@ Reguły bezpieczeństwa (obowiązkowe):
   * Zapytanie People API Search wyłącznie z `search()` (zgoda `confirm`, flaga, cache, limity) — nigdy przy renderowaniu list / karty.
     Identyfikatory Apollo nie trafiają do odpowiedzi REST.
   * Płatne odblokowanie: `UBR_APOLLO_PHONE_ENABLED` (domyślnie wyłączone) sprawdzane w preflight i ponownie w `request()`.
-  * Testy: `tests/apollo-matching-p103.php` (mocki). Następna migracja: M013 (wdrożone M001–M012).
+  * Testy: `tests/apollo-matching-p103.php` (mocki).
+- Performance & Progressive Discovery (Prompt 10.4, ARCHITECTURE §20):
+  * Pobieranie stron firm WYŁĄCZNIE przez `PageFetcher::fetch()` / `PageFetcher::hop()` (wspólny `PageCache`) albo
+    `ParallelFetcher` — nie wołaj `wp_remote_get` na stronach firm bezpośrednio (brak cache i ochrony przed ponownym timeoutem).
+    `fresh: true` tylko dla świadomego odświeżenia przez użytkownika.
+  * Weryfikacja: okno firm (`UBR_VERIFY_BATCH`), jeden proces, curl_multi; nie zwiększaj liczby workerów PHP (LocalWP 2 FPM).
+    Nowe reguły pobierania podstron w `WebsiteInspector::inspect()` odzwierciedlaj w `nextSubpage()` (inaczej podwójne pobrania).
+  * Czekanie na limit dostawcy przez `ProviderHttpClient::idle()` (akcja `ubr/http/idle`), nie `usleep`.
+  * Lista Discover: nowe dane w wierszu = pole w `CompanyPresenter::row()`; zmiana stanu w innej tabeli wymaga `updated_at`
+    (wykrywanie zmian w `changed_since`). Bez linków `tel:` w aplikacji.
+  * Testy: `tests/performance-p104.php` (cache jest wyłączony w pozostałych testach filtrem `ubr/http/page_cache_enabled`).
+    Następna migracja: M014 (wdrożone M001–M013).
 - UWAGA BEZPIECZEŃSTWO: prywatny klucz SSH `key` (+ `key.pub`) był śledzony w repozytorium (commit `9b24093`); 10.10.2026 usunięty z drzewa
   (`git rm`, bez commita) — nadal jest w historii, wymaga unieważnienia. Nie czytać, nie używać, nie przywracać, nie dodawać do paczek. Plan rotacji i usunięcia z historii: `docs/SECURITY-KEY.md`
   (przepisanie historii Git tylko za zgodą właściciela). Nowe sekrety (ClickUp, klucz szyfrowania) wyłącznie w `wp-config.php`.

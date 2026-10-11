@@ -103,7 +103,8 @@ class CompanyPhoneService
 			throw UbrException::invalid('robots.txt strony nie pozwala na pobranie strony głównej — numery można dodać ręcznie.');
 		}
 
-		$home = $this->fetcher->fetch((string) $company['website_url'], 10);
+		// Ręczne odświeżenie = aktualna treść strony (bez odczytu wspólnej pamięci podręcznej; wynik ją aktualizuje).
+		$home = $this->fetcher->fetch((string) $company['website_url'], 10, true);
 
 		if (! $home['ok']) {
 			throw UbrException::invalid('Nie udało się pobrać strony: ' . ($home['blocked'] ? 'adres zablokowany (ochrona SSRF)' : ($home['error'] ?? 'błąd')) . '.');
@@ -119,7 +120,7 @@ class CompanyPhoneService
 		}
 
 		if ($sub) {
-			$res = $this->fetcher->fetch($sub, 10);
+			$res = $this->fetcher->fetch($sub, 10, true);
 
 			if ($res['ok']) {
 				$docs[] = ['html' => $res['body'], 'url' => (string) $res['final_url'], 'kind' => 'contact'];
@@ -148,7 +149,7 @@ class CompanyPhoneService
 				?? WebsiteAnalyzerService::pickSubpage($listDoc, '/(biuro|office|kontakt-|contact-)/iu', (string) $contactDoc['url'], $exclude);
 
 			if ($next && $robots->allowed($rules, (string) (parse_url($next, PHP_URL_PATH) ?: '/'))) {
-				$res = $this->fetcher->fetch($next, 10);
+				$res = $this->fetcher->fetch($next, 10, true);
 
 				if ($res['ok']) {
 					$docs[] = ['html' => $res['body'], 'url' => (string) $res['final_url'], 'kind' => 'contact'];

@@ -326,6 +326,9 @@ add_filter('ubr/discovery/inline_fallback', '__return_false');
 // Kroki wykonujemy w teście ręcznie (proces cron nie ma zarejestrowanego dostawcy testowego).
 add_filter('ubr/queue/spawn', '__return_false');
 add_filter('ubr/queue/async', '__return_false');
+// Prompt 10.4: wspólna pamięć podręczna stron i równoległe pobieranie — wyłączone w testach ogólnych (strony testowe
+// zmieniają treść między przypadkami); testowane osobno w tests/performance-p104.php.
+add_filter('ubr/http/page_cache_enabled', '__return_false');
 add_filter('ubr/registry/namespace', fn () => 'ubrt_');
 // DNS testowych domen *.ubrtest.pl: publiczny adres; internal.ubrtest.pl → adres prywatny (test SSRF).
 add_filter('ubr/url_guard/resolve', fn ($r, $host) => str_ends_with($host, 'ubrtest.pl') ? ($host === 'internal.ubrtest.pl' ? ['10.0.0.5'] : ['93.184.216.34']) : $r, 10, 2);
@@ -1505,6 +1508,9 @@ try {
 
 	/* APOLLO CONTACT MATCHING & PHONE UNLOCK (Prompt 10.3) — dopasowanie, decyzje, blokada płatnego pobierania (mocki). */
 	require __DIR__ . '/apollo-matching-p103.php';
+
+	/* PERFORMANCE & PROGRESSIVE DISCOVERY (Prompt 10.4) — cache stron, równoległe pobieranie, statusy, lekkie odświeżanie. */
+	require __DIR__ . '/performance-p104.php';
 
 	/* ------------------------------------------------------------------ */
 	UbrT::group('Kolejka — wykrywanie zablokowanych zadań');

@@ -62,6 +62,8 @@ final class Tables
 
 	public const APOLLO_MATCH_HISTORY = 'ubr_apollo_match_history';
 
+	public const PAGE_CACHE = 'ubr_page_cache';
+
 	public static function name(string $table): string
 	{
 		global $wpdb;
@@ -116,6 +118,7 @@ final class Tables
 			self::APOLLO_PEOPLE,
 			self::APOLLO_MATCHES,
 			self::APOLLO_MATCH_HISTORY,
+			self::PAGE_CACHE,
 		];
 	}
 }

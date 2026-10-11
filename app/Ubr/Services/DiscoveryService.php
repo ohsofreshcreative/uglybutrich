@@ -140,12 +140,20 @@ class DiscoveryService
 			app(LeadIntelligenceRunner::class)->kick();
 		}
 
-		return [
+		$out = [
 			'items' => app(CallPresenter::class)->attach($ctx, app(ContactResearchService::class)->applyOrganizationView($ctx, array_map(fn ($r) => CompanyPresenter::row($r), $data['items'])), $data['items']),
 			'total' => $data['total'],
 			'page' => $page,
 			'per_page' => $perPage,
+			// Czas serwera (UTC) do kolejnego lekkiego odświeżenia (`changed_since`) — z zapasem 2 s na zapisy w toku.
+			'server_time' => gmdate('Y-m-d H:i:s', time() - 2),
 		];
+
+		if (! empty($extra['ids'])) {
+			$out['changes_only'] = true;
+		}
+
+		return $out;
 	}
 
 	/**
@@ -197,6 +205,14 @@ class DiscoveryService
 			return $search;
 		}
 
+		// Prompt 10.4: sprawdzanie zablokowanych kroków najwyżej co 10 s na wyszukiwanie (interfejs odpytuje status co 2,5 s).
+		$throttle = 'ubr_kick_' . (int) $search['id'];
+
+		if (get_transient($throttle)) {
+			return $search;
+		}
+
+		set_transient($throttle, 1, 10);
 		$result = $this->monitor->recover((int) $search['id']);
 
 		return ($result['resumed'] || $result['failed']) ? ($this->searches->find((int) $search['id']) ?? $search) : $search;

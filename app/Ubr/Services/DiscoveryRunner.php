@@ -198,6 +198,7 @@ class DiscoveryRunner
 		$existing = 0;
 		$skippedSize = 0;
 		$alreadyInSearch = 0;
+		$added = [];
 		$position = $this->results->countForSearch($searchId);
 
 		foreach ($page->candidates as $candidate) {
@@ -221,10 +222,22 @@ class DiscoveryRunner
 			if ($this->results->add($searchId, (int) $search['organization_id'], $ingested['company_id'], $key, $position + 1, $candidate->matchedTerms)) {
 				$position++;
 				$saved++;
+				$added[] = (int) $ingested['company_id'];
 				$ingested['created'] ? $new++ : $existing++;
 				$this->relevance->scoreResult($searchId, $ingested['company_id'], $criteria, $key, $candidate->matchedTerms);
 			} else {
 				$alreadyInSearch++;
+			}
+		}
+
+		// Prompt 10.4 — Progressive Discovery: firmy z tej strony wyników od razu trafiają do kolejki weryfikacji (w tle,
+		// osobny worker), zamiast czekać na zakończenie całego wyszukiwania. Weryfikacja nigdy nie psuje wyszukiwania.
+		if ($added !== []) {
+			try {
+				$queued = $this->verification->enqueueCompanies($added, (int) $search['organization_id'], $searchId);
+				$state['verification_queued'] = (int) ($state['verification_queued'] ?? 0) + $queued;
+			} catch (Throwable $e) {
+				$this->events->log($searchId, 'warning', 'Nie udało się zlecić weryfikacji: ' . $e->getMessage());
 			}
 		}
 
@@ -336,7 +349,8 @@ class DiscoveryRunner
 		$state['explanation'] = $this->explain($criteria, $providerKeys, $state, $count);
 
 		try {
-			$state['verification_queued'] = $count > 0 ? $this->verification->enqueueForSearch($searchId, $organizationId) : 0;
+			// Firmy zlecone już po kolejnych stronach wyników są w kolejce lub zweryfikowane — tu tylko uzupełnienie.
+			$state['verification_queued'] = (int) ($state['verification_queued'] ?? 0) + ($count > 0 ? $this->verification->enqueueForSearch($searchId, $organizationId) : 0);
 		} catch (Throwable $e) {
 			// Weryfikacja nigdy nie psuje wyszukiwania.
 			$state['verification_queued'] = 0;

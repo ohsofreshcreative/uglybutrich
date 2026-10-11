@@ -17,6 +17,8 @@ class WebsiteInspector
 {
 	public const USER_AGENT = 'UglyButRichBot/0.2 (+https://ohsofresh.pl; company verification)';
 
+	public const MAX_BYTES = 600 * 1024;
+
 	private const PARKED_PATTERNS = [
 		'domain is for sale', 'this domain is for sale', 'this domain may be for sale', 'buy this domain', 'domain for sale',
 		'domena na sprzedaz', 'ta domena jest na sprzedaz', 'domena jest na sprzedaz', 'kup te domene', 'domena zostala zarejestrowana',
@@ -34,31 +36,7 @@ class WebsiteInspector
 	 */
 	public function inspect(string $url, int $timeout = 7): array
 	{
-		$result = [
-			'url' => $url,
-			'reachable' => false,
-			'http_code' => null,
-			'error' => null,
-			'final_url' => null,
-			'final_domain' => null,
-			'redirected_domain' => false,
-			'final_domain_type' => null,
-			'title' => null,
-			'site_name' => null,
-			'description' => null,
-			'jsonld' => [],
-			'parked' => false,
-			'placeholder' => false,
-			'text_length' => 0,
-			'pages' => [],
-			'identifiers' => ['nip' => [], 'krs' => [], 'regon' => []],
-			'emails_same_domain' => 0,
-			'emails_other_domain' => 0,
-			'has_phone' => false,
-			'address_cities' => [],
-			'postal_codes' => [],
-			'copyright' => null,
-		];
+		$result = $this->blank($url);
 
 		$home = $this->fetch($url, $timeout);
 
@@ -112,6 +90,66 @@ class WebsiteInspector
 		$result['postal_codes'] = array_slice(array_values(array_unique($result['postal_codes'])), 0, 5);
 
 		return $result;
+	}
+
+	/**
+	 * @return array<string, mixed>
+	 */
+	private function blank(string $url): array
+	{
+		return [
+			'url' => $url,
+			'reachable' => false,
+			'http_code' => null,
+			'error' => null,
+			'final_url' => null,
+			'final_domain' => null,
+			'redirected_domain' => false,
+			'final_domain_type' => null,
+			'title' => null,
+			'site_name' => null,
+			'description' => null,
+			'jsonld' => [],
+			'parked' => false,
+			'placeholder' => false,
+			'text_length' => 0,
+			'pages' => [],
+			'identifiers' => ['nip' => [], 'krs' => [], 'regon' => []],
+			'emails_same_domain' => 0,
+			'emails_other_domain' => 0,
+			'has_phone' => false,
+			'address_cities' => [],
+			'postal_codes' => [],
+			'copyright' => null,
+		];
+	}
+
+	/**
+	 * Prompt 10.4 — kolejna podstrona, którą `inspect()` pobrałby po stronie głównej i podstronach już
+	 * sprawdzonych (`$subHtmls`, pusty tekst = nieudane pobranie). Pozwala pobrać z wyprzedzeniem dokładnie te same
+	 * strony (równolegle dla kilku firm) — bez dodatkowych zapytań. Null = inspect() nie pobierze kolejnej strony.
+	 *
+	 * @param list<string> $subHtmls
+	 */
+	public function nextSubpage(string $homeHtml, string $homeFinalUrl, array $subHtmls = []): ?string
+	{
+		$state = $this->blank($homeFinalUrl);
+		$this->collect($homeHtml, $state, true);
+
+		foreach ($subHtmls as $html) {
+			if ($html !== '') {
+				$this->collect($html, $state, false);
+			}
+		}
+
+		$plan = array_slice($this->subpages($homeHtml, $homeFinalUrl), 0, 3);
+		$next = $plan[count($subHtmls)] ?? null;
+
+		if (! $next || ($state['identifiers']['nip'] !== [] && $state['identifiers']['krs'] !== [] && $next[0] !== 'legal')) {
+			return null;
+		}
+
+		return $next[1];
 	}
 
 	/**
@@ -173,31 +211,26 @@ class WebsiteInspector
 				return ['code' => null, 'body' => '', 'final_url' => $current, 'error' => 'Adres zablokowany (ochrona SSRF): ' . $check['reason']];
 			}
 
-			$unpin = PageFetcher::pin($current, $check['ips'] ?? []);
-			$response = wp_remote_get($current, [
+			$response = PageFetcher::hop($current, $check['ips'] ?? [], [
 				'timeout' => $timeout,
-				'redirection' => 0,
 				'user-agent' => self::USER_AGENT,
-				'limit_response_size' => 600 * 1024,
 				'headers' => ['Accept' => 'text/html,application/xhtml+xml', 'Accept-Language' => 'pl,en;q=0.5'],
-			]);
-			$unpin();
+			], self::MAX_BYTES);
 
-			if (is_wp_error($response)) {
-				return ['code' => null, 'body' => '', 'final_url' => $current, 'error' => mb_substr($response->get_error_message(), 0, 250)];
+			if ($response['code'] === null) {
+				return ['code' => null, 'body' => '', 'final_url' => $current, 'error' => mb_substr((string) $response['error'], 0, 250)];
 			}
 
-			$code = (int) wp_remote_retrieve_response_code($response);
-			$location = (string) wp_remote_retrieve_header($response, 'location');
+			$code = (int) $response['code'];
 
-			if ($code >= 300 && $code < 400 && $location !== '') {
-				$current = PageFetcher::absolute($location, $current);
+			if ($code >= 300 && $code < 400 && $response['location'] !== '') {
+				$current = PageFetcher::absolute($response['location'], $current);
 				continue;
 			}
 
 			return [
 				'code' => $code ?: null,
-				'body' => (string) wp_remote_retrieve_body($response),
+				'body' => substr($response['body'], 0, self::MAX_BYTES),
 				'final_url' => $current,
 				'error' => null,
 			];

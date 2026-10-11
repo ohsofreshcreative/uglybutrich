@@ -72,6 +72,7 @@ final class CompanyPresenter
 			'flags' => FitFlags::present(json_decode((string) ($r['fit_flags'] ?? ''), true) ?: []),
 			'analysis' => self::analysis($r),
 			'contacts' => ContactResearchService::summary($r),
+			'stages' => self::stages($r),
 			'lead' => array_key_exists('li_status', $r) ? self::lead($r) : null,
 			'pipeline' => isset($r['pipeline_status']) ? [
 				'status' => $r['pipeline_status'],
@@ -145,6 +146,64 @@ final class CompanyPresenter
 			'analyzed_at' => ! empty($r['analyzed_at']) ? gmdate('c', strtotime($r['analyzed_at'] . ' UTC')) : null,
 			'can_preview' => ! empty($r['last_analysis_id']),
 		];
+	}
+
+	/**
+	 * Prompt 10.4 — niezależne statusy etapów przetwarzania firmy (Discover): weryfikacja istnienia, strona WWW
+	 * (Website Analyzer), telefony firmy, decydent. Każdy etap ma własny status — firma jest widoczna na liście od razu,
+	 * a niepewność danych jest jawnie oznaczona. Ton: good | info | active | warn | danger | muted.
+	 *
+	 * @param array<string, mixed> $r
+	 * @return array<string, array{key: string, label: string, tone: string, title: string}>
+	 */
+	public static function stages(array $r): array
+	{
+		$v = (string) ($r['verification_status'] ?? VerificationStatus::PENDING);
+		$queue = (string) ($r['vq_status'] ?? '');
+		$domain = (string) ($r['domain_status'] ?? DomainStatus::UNCHECKED);
+		$st = fn (string $key, string $label, string $tone, string $title) => compact('key', 'label', 'tone', 'title');
+
+		$verification = match (true) {
+			$queue === 'running' => $st('running', 'Weryfikacja w toku', 'active', 'Sprawdzanie rejestrów (KRS, biała lista VAT) i strony firmy.'),
+			in_array($v, [VerificationStatus::INACTIVE, 'suspended'], true) => $st('inactive', 'Nieaktywna', 'danger', 'Rejestr wskazuje firmę wykreśloną, zawieszoną lub nieaktywną — nie trafia do gotowych leadów.'),
+			$domain === DomainStatus::MISMATCH => $st('mismatch', 'Niezgodność', 'danger', 'Strona WWW należy do innego podmiotu niż firma — dane wymagają wyjaśnienia.'),
+			$v === VerificationStatus::VERIFIED => $st('verified', 'Zweryfikowana', 'good', 'Istnienie firmy potwierdzone w rejestrze.'),
+			$v === VerificationStatus::UNCERTAIN => $st('uncertain', 'Niepewna', 'warn', 'Nie udało się jednoznacznie potwierdzić firmy w rejestrze.'),
+			default => $st('pending', 'Oczekuje na weryfikację', 'muted', $queue === 'queued' ? 'Firma w kolejce weryfikacji.' : 'Weryfikacja nie została jeszcze wykonana.'),
+		};
+
+		$analysis = (string) ($r['analysis_status'] ?? '');
+		$website = match ($analysis) {
+			'queued' => $st('queued', 'Oczekuje', 'muted', 'Analiza strony w kolejce.'),
+			'running' => $st('running', 'Analizowanie', 'active', 'Website Analyzer sprawdza stronę.'),
+			'completed', 'partial' => $st('done', 'Gotowe', 'good', $analysis === 'partial' ? 'Analiza częściowa.' : 'Analiza zakończona.'),
+			'failed' => $st('failed', 'Błąd', 'danger', 'Analiza strony nie powiodła się.'),
+			default => empty($r['domain']) ? $st('none', 'Brak strony', 'muted', 'Firma nie ma ustalonej strony WWW.') : $st('none', 'Nie analizowano', 'muted', 'Analizę strony uruchamia użytkownik.'),
+		};
+
+		$count = (int) ($r['phones_count'] ?? 0);
+		$checked = ! empty($r['phones_checked_at']);
+		$unreachable = in_array((string) ($r['website_status'] ?? ''), ['unreachable', 'http_error'], true);
+		$phones = match (true) {
+			$count > 0 => $st('found', 'Znaleziono (' . $count . ')', 'good', 'Numery firmy ze strony WWW lub dodane ręcznie.'),
+			$checked => $st('none', 'Nie znaleziono', 'muted', 'Na sprawdzonych stronach nie ma numeru firmy.'),
+			empty($r['domain']) => $st('no_site', 'Brak strony', 'muted', 'Brak strony WWW — numer można dodać ręcznie.'),
+			$queue === 'running' => $st('running', 'Wyszukiwanie', 'active', 'Numery są odczytywane ze stron pobranych przy weryfikacji.'),
+			$unreachable => $st('error', 'Błąd', 'danger', 'Strona firmy nie odpowiadała.'),
+			$v === VerificationStatus::PENDING || $queue === 'queued' => $st('pending', 'Oczekuje', 'muted', 'Numery zostaną odczytane przy weryfikacji firmy.'),
+			default => $st('not_checked', 'Nie sprawdzono', 'muted', 'Numery można odświeżyć w karcie firmy.'),
+		};
+
+		$contacts = (string) ($r['contacts_status'] ?? '');
+		$dm = match ($contacts) {
+			'queued' => $st('queued', 'Oczekuje', 'muted', 'Wyszukiwanie decydentów w kolejce.'),
+			'running' => $st('running', 'Wyszukiwanie', 'active', 'Decision Maker Finder sprawdza KRS i stronę firmy.'),
+			'completed', 'partial' => ! empty($r['top_contact_id']) ? $st('found', 'Znaleziono', 'good', 'Znaleziono decydenta.') : $st('none', 'Nie znaleziono', 'muted', 'Nie znaleziono wiarygodnego decydenta.'),
+			'failed' => $st('failed', 'Błąd', 'danger', 'Wyszukiwanie decydentów nie powiodło się.'),
+			default => $st('not_started', 'Nie szukano', 'muted', 'Wyszukiwanie decydentów uruchamia użytkownik.'),
+		};
+
+		return ['verification' => $verification, 'website' => $website, 'phones' => $phones, 'dm' => $dm];
 	}
 
 	/**

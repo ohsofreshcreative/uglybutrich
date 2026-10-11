@@ -14,6 +14,7 @@ use App\Ubr\Domain\Verification\RegistryRecord;
 use App\Ubr\Domain\Verification\RegistryUnavailable;
 use App\Ubr\Infrastructure\Database\DatabaseException;
 use App\Ubr\Infrastructure\Database\Db;
+use App\Ubr\Infrastructure\Http\PageCache;
 use App\Ubr\Infrastructure\Http\WebsiteInspector;
 use App\Ubr\Infrastructure\Registry\CeidgClient;
 use App\Ubr\Infrastructure\Registry\GusBirClient;
@@ -125,6 +126,7 @@ class CompanyVerifier
 		// 4. Zapis.
 		$this->persist($company, $site, $nameMatch, $decision, $domainDecision, $errors, $context, (int) round((microtime(true) - $started) * 1000));
 		$this->relevance->recomputeForCompany($companyId);
+		$this->extractPhones($company, $site, (string) $domainDecision['status']);
 
 		$retryAfter = 0;
 
@@ -139,6 +141,36 @@ class CompanyVerifier
 			'retry_after' => $retryAfter,
 			'error' => $errors ? implode('; ', $errors) : null,
 		];
+	}
+
+	/**
+	 * Prompt 10.4 — numery firmy ze stron pobranych już przy weryfikacji (wspólna pamięć podręczna): bez dodatkowych
+	 * zapytań do strony, od razu po weryfikacji (wcześniej dopiero po Website Analyzerze / ręcznym odświeżeniu).
+	 * Pomijane, gdy strona nieosiągalna, zaparkowana albo domena należy do innego podmiotu.
+	 *
+	 * @param array<string, mixed> $company
+	 * @param array<string, mixed>|null $site
+	 */
+	private function extractPhones(array $company, ?array $site, string $domainStatus): void
+	{
+		if (! $site || empty($site['reachable']) || ! empty($site['parked']) || $domainStatus === DomainStatus::MISMATCH || ! apply_filters('ubr/verification/extract_phones', true)) {
+			return;
+		}
+
+		$cache = app(PageCache::class);
+		$docs = [];
+
+		foreach ((array) ($site['pages'] ?? []) as $page) {
+			$hit = $cache->follow((string) ($page['url'] ?? ''));
+
+			if ($hit && $hit['code'] >= 200 && $hit['code'] < 400 && $hit['body'] !== '') {
+				$docs[] = ['html' => $hit['body'], 'url' => $hit['final_url'], 'kind' => (string) ($page['kind'] ?? 'other')];
+			}
+		}
+
+		if ($docs !== []) {
+			app(CompanyPhoneService::class)->fromDocuments((int) $company['id'], $docs);
+		}
 	}
 
 	/** @var array<string, array{retry_after: int}> */

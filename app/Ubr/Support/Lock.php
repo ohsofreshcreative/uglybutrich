@@ -16,6 +16,14 @@ final class Lock
 		return (int) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', self::key($name))) === 1;
 	}
 
+	/** Blokada z oczekiwaniem (maks. `$seconds` s) — np. wspólny limit częstotliwości dostawcy dla wielu procesów. */
+	public static function acquireWait(string $name, int $seconds): bool
+	{
+		global $wpdb;
+
+		return (int) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, %d)', self::key($name), max(0, $seconds))) === 1;
+	}
+
 	public static function release(string $name): void
 	{
 		global $wpdb;

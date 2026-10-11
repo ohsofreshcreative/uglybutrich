@@ -42,8 +42,14 @@ final class CallReadiness
 	 */
 	public static function classify(array $s): string
 	{
-		if (! empty($s['blocked'])) {
+		// Prompt 10.4: firma nieaktywna w rejestrze nie jest leadem do telefonu; strona innego podmiotu (MISMATCH) —
+		// dane do wyjaśnienia, nigdy automatycznie „gotowa do telefonu”, nawet z numerem.
+		if (! empty($s['blocked']) || in_array($s['verification_status'] ?? '', ['inactive', 'suspended'], true)) {
 			return self::BLOCKED;
+		}
+
+		if (($s['domain_status'] ?? '') === 'mismatch') {
+			return self::RESEARCH;
 		}
 
 		if (! empty($s['direct_phone'])) {

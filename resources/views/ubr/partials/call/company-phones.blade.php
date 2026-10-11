@@ -26,7 +26,8 @@
 			<li class="rounded-xl border border-line px-3 py-2 text-[13px] flex flex-wrap items-start gap-2">
 				<div class="min-w-0 flex-1">
 					<div class="flex flex-wrap items-center gap-1.5">
-						<a :href="$store.ubr.safeTel(ph.tel)" class="font-bold tabular-nums hover:underline" x-text="ph.number"></a>
+						<span class="font-bold tabular-nums" x-text="ph.number"></span>
+						<button type="button" class="grid place-items-center size-8 rounded-md text-ink-muted hover:text-ink hover:bg-canvas" @click="$store.ubr.copyPhone(ph)" :aria-label="'Kopiuj numer ' + ph.number">@include('ubr.partials.icon', ['name' => 'copy', 'class' => 'size-3.5'])</button>
 						<span class="ubr-badge-declared" x-text="ph.type_label"></span>
 						<span class="ubr-badge-confirmed" x-show="$store.ubr.phones.data?.main?.id === ph.id">główny</span>
 						<span class="ubr-badge-unavailable" x-show="ph.manual">ręczny · tylko Twoja organizacja</span>

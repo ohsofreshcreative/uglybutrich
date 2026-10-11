@@ -378,10 +378,8 @@
 								<td class="!px-3"><input type="checkbox" class="ubr-checkbox" x-show="canAnalyze || canFindContacts" :value="c.id" x-model.number="selected" :aria-label="'Zaznacz ' + c.name"></td>
 								<td class="min-w-0">
 									@include('ubr.partials.discover-company-cell', ['var' => 'c', 'hideSize' => true])
-									<div class="mt-1 flex flex-wrap items-center gap-1 text-[11px]">
-										<span class="!whitespace-normal" :class="$store.ubr.verificationBadge(c.verification.status)" x-text="c.verification.label" :title="c.verification.source || ''"></span>
-										<span class="text-ink-muted [overflow-wrap:anywhere]" x-text="[c.city, c.region].filter(Boolean).join(', ') || (c.location.match === 'filtered' ? filterLocationLabel : 'lokalizacja: brak danych')"></span>
-									</div>
+									<div class="mt-1">@include('ubr.partials.discover-stages', ['var' => 'c'])</div>
+									<div class="mt-0.5 text-[11px] text-ink-muted [overflow-wrap:anywhere]" x-text="[c.city, c.region].filter(Boolean).join(', ') || (c.location.match === 'filtered' ? filterLocationLabel : 'lokalizacja: brak danych')"></div>
 								</td>
 								<td class="min-w-0">@include('ubr.partials.call.size-cell', ['var' => 'c'])</td>
 								<td class="min-w-0">@include('ubr.partials.call.website-cell', ['var' => 'c'])</td>
@@ -410,6 +408,7 @@
 					<template x-for="c in results.items" :key="c.id">
 						<li class="p-4" x-data="{ more: false }">
 							@include('ubr.partials.call.card', ['var' => 'c', 'save' => true, 'searchExpr' => 'search.id', 'select' => 'canAnalyze || canFindContacts'])
+							<div class="mt-2">@include('ubr.partials.discover-stages', ['var' => 'c'])</div>
 							<button type="button" class="mt-3 inline-flex items-center gap-1 h-9 text-[12px] font-semibold text-ink-soft hover:text-ink" @click="more = !more" :aria-expanded="more">
 								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-3.5 transition" :class="more ? 'rotate-90' : ''" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
 								<span x-text="more ? 'Mniej danych' : 'Więcej danych (oceny, weryfikacja, decydenci)'"></span>

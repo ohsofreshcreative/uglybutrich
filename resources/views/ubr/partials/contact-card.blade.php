@@ -56,8 +56,8 @@
 			<template x-for="l in (ct.phone_links || [])" :key="l.id">
 				<div class="mb-2 last:mb-0 min-w-0" :data-phone-link="l.status">
 					<div class="flex flex-wrap items-center gap-1.5">
-						<template x-if="l.direct && $store.ubr.safeTel(l.tel)">
-							<a :href="$store.ubr.safeTel(l.tel)" class="font-bold tabular-nums hover:underline" :class="l.status === 'VERIFIED' ? 'text-money' : 'text-gold-deep'" x-text="l.number" :aria-label="'Zadzwoń do ' + ct.full_name + ': ' + l.number"></a>
+						<template x-if="l.direct">
+							<span class="font-bold tabular-nums" :class="l.status === 'VERIFIED' ? 'text-money' : 'text-gold-deep'" x-text="l.number"></span>
 						</template>
 						<template x-if="!l.direct"><span class="font-bold tabular-nums text-ink-muted" :class="l.status === 'REJECTED' ? 'line-through' : ''" x-text="l.number"></span></template>
 						<button type="button" x-show="l.direct" class="grid place-items-center size-8 rounded-md text-ink-muted hover:text-ink hover:bg-canvas" @click="$store.ubr.copyPhone(l)" :aria-label="'Kopiuj numer ' + l.number">@include('ubr.partials.icon', ['name' => 'copy', 'class' => 'size-3.5'])</button>
