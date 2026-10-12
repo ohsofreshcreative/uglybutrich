@@ -106,3 +106,12 @@ add_filter('sage/acf-composer/fields', fn() => [
 
 
 add_filter( 'acf/settings/enable_block_bindings', '__return_false' );
+
+/*--- APP REDIRECT ---*/
+
+add_action('template_redirect', function () {
+    if (is_front_page()) {
+        wp_safe_redirect(home_url('/app/login/'), 302);
+        exit;
+    }
+});
