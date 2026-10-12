@@ -1065,3 +1065,15 @@ lub z `UBR_MAIL_TEST_MAILBOXES`.
 Interfejs `OutreachAssistant` (domyślnie `DisabledOutreachAssistant` → 501), endpoint `POST /sequences/messages/{id}/ai-suggest`
 i przycisk „Spersonalizuj z AI” w edytorze. Przyszła implementacja zaproponuje temat / treść kroku z zapisanych danych (analiza
 strony, Opportunity, Website Age, branża, wielkość); pracownik zatwierdza; płatne wywołania tylko za zgodą.
+
+## 23. Logowanie do panelu — /app/login (12.10.2026)
+
+Własny ekran logowania w stylu aplikacji zamiast `wp-login.php`; po zalogowaniu użytkownik trafia do aplikacji, nie do kokpitu WordPressa.
+
+- **Pliki:** `app/Ubr/Http/AppLogin.php` (ekran, przekierowania, branding ekranów WP), `app/Ubr/Support/LoginThrottle.php` (limit prób), widok `resources/views/ubr/pages/login.blade.php`, trasa `login` w `routes/app.php` (ukryta, jedyna publiczna w `/app`).
+- **Uwierzytelnianie:** `wp_signon()` — hasła WordPressa, logowanie e-mailem lub loginem, „Nie wylogowuj mnie” (14 dni), filtry wtyczek zabezpieczeń (`authenticate`, `wp_login_failed`) działają.
+- **Przekierowania:** filtr `login_url` → `/app/login/?redirect_to=…` (także `auth_redirect` z wp-admin, `reauth=1`); `login_redirect` → aplikacja, gdy celem był domyślny kokpit; `wp-login.php` (zwykłe logowanie, GET) → `/app/login`. Bez zmian zostają: reset hasła (`lostpassword`, `rp`, `resetpass`), wylogowanie, `postpass`, `confirmaction`, okienko `interim-login` w wp-admin, POST na `wp-login.php`. Awaryjnie: `/wp-login.php?native=1`.
+- **Bezpieczeństwo:** `redirect_to` tylko z tej samej domeny (`wp_validate_redirect`), nigdy na stronę logowania (pętla); jeden komunikat dla złego loginu i hasła; limit prób: para IP + login 5 / 15 min, IP 20 / 15 min (HTTP 429); nonce formularza z awaryjnym sprawdzeniem Origin/Referer (strona logowania zbuforowana przez cache hostingu); `DONOTCACHEPAGE` + `X-LiteSpeed-Cache-Control: no-cache`.
+- **Członkowie zespołu** (bez `edit_posts`, filtr `ubr/login/admin_capability`): kokpit WordPressa → aplikacja, pasek administracyjny ukryty; profil (`profile.php`), `admin-ajax`, `admin-post` działają. Administratorzy — bez zmian.
+- **Wylogowanie:** link w aplikacji → `/app/login/?loggedout=1` („Wylogowano”). Poprawka: `wp_logout_url()` zwraca adres zakodowany dla HTML, a Blade kodował go drugi raz (`&amp;amp;`) — ginął nonce i WordPress pokazywał ekran potwierdzenia.
+- **Wyłączenie:** `add_filter('ubr/login/enabled', '__return_false')` przywraca standardowe logowanie WordPressa.

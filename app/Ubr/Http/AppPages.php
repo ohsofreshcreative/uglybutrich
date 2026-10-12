@@ -82,8 +82,14 @@ class AppPages
 		header('X-Robots-Tag: noindex, nofollow');
 		header('Referrer-Policy: same-origin');
 
+		// Ekran logowania — jedyny dostępny bez sesji.
+		if ($page === 'login') {
+			app(AppLogin::class)->handle();
+			exit;
+		}
+
 		if (! is_user_logged_in()) {
-			wp_safe_redirect(wp_login_url(self::url($page ?? 'dashboard')));
+			wp_safe_redirect(AppLogin::url(['redirect_to' => $page && $page !== 'dashboard' ? self::url($page) : null]));
 			exit;
 		}
 
@@ -121,7 +127,8 @@ class AppPages
 			'memberships' => $this->tenants->memberships($user->ID),
 			'logoUrl' => $this->asset('resources/images/ubr-logo.png'),
 			'iconUrl' => $this->asset('resources/images/ubr-icon.png'),
-			'logoutUrl' => wp_logout_url(self::url()),
+			// wp_logout_url() zwraca adres już zakodowany dla HTML (&amp;) — Blade koduje sam, więc dekodujemy (inaczej znika nonce).
+			'logoutUrl' => html_entity_decode(wp_logout_url(AppLogin::url(['loggedout' => '1'])), ENT_QUOTES | ENT_HTML5),
 			'config' => [
 				'restUrl' => esc_url_raw(rest_url('ubr/v1')),
 				'nonce' => wp_create_nonce('wp_rest'),

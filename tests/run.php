@@ -1513,6 +1513,7 @@ try {
 	require __DIR__ . '/performance-p104.php';
 	require __DIR__ . '/discover-claim-p1043.php';
 	require __DIR__ . '/sequences-p105.php';
+	require __DIR__ . '/login-app.php';
 
 	/* ------------------------------------------------------------------ */
 	UbrT::group('Kolejka — wykrywanie zablokowanych zadań');

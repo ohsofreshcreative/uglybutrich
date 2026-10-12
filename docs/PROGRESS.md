@@ -397,3 +397,7 @@ Szczegóły: ARCHITECTURE.md §22, `docs/QA-REPORT.md` §17. Migracja M015 (sche
 ## Następny etap
 
 Przed wdrożeniem na Hostinger: unieważnienie klucza SSH i commit jego usunięcia (`docs/SECURITY-KEY.md`), sprawdzenie wymagań serwera i konfiguracji produkcyjnej (`docs/DEPLOYMENT.md`), decyzja o Website Analyzerze na Hostingerze (VPS / osobny renderer / tryb PARTIAL). Do decyzji: zmiany scoringu D12/D13 z raportu QA, retencja logów, ClickUp Live (lista kontrolna w QA-REPORT §10), Apollo People Search, klucze CEIDG/GUS.
+
+## Logowanie /app/login (12.10.2026)
+
+Własny ekran logowania w stylu aplikacji, przekierowanie do aplikacji po zalogowaniu, limit prób, branding ekranów resetu hasła, poprawka linku „Wyloguj”. Szczegóły: ARCHITECTURE.md §23. Testy (kontener): PHP 1481/1481 (+31: `tests/login-app.php`), Playwright 32/32 (nowe) + kontrola ekranów aplikacji.

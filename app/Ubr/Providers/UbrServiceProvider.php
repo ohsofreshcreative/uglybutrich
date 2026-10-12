@@ -52,6 +52,8 @@ class UbrServiceProvider extends ServiceProvider
 		add_filter('query_vars', fn ($vars) => $this->app->make(AppPages::class)->queryVars($vars));
 		add_action('template_redirect', fn () => $this->app->make(AppPages::class)->maybeRender(), 0);
 		add_filter('redirect_canonical', fn ($redirect) => $this->app->make(AppPages::class)->disableCanonicalRedirect($redirect), 10, 1);
+		// Własny ekran logowania /app/login (zamiast wp-login.php) i powrót do aplikacji po zalogowaniu.
+		$this->app->make(\App\Ubr\Http\AppLogin::class)->register();
 
 		// REST API.
 		add_action('rest_api_init', fn () => $this->app->make(RestRegistrar::class)->register());
