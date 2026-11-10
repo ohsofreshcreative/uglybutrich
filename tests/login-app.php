@@ -41,7 +41,7 @@ $user = new WP_User(0);
 $user->ID = 1;
 $lr = app(AppLogin::class);
 UbrT::eq($app, $lr->loginRedirect(admin_url(), '', $user), 'login_redirect: brak celu (domyślnie wp-admin) → aplikacja');
-UbrT::eq($app, $lr->loginRedirect(admin_url(), admin_url(), $user), 'login_redirect: cel = kokpit WordPressa → aplikacja');
+UbrT::eq(admin_url(), $lr->loginRedirect(admin_url(), admin_url(), $user), 'login_redirect: kokpit wskazany jawnie (wejście na /wp-admin/) → kokpit');
 UbrT::eq(admin_url('plugins.php'), $lr->loginRedirect(admin_url('plugins.php'), admin_url('plugins.php'), $user), 'login_redirect: konkretna strona wp-admin zachowana');
 UbrT::eq(admin_url(), $lr->loginRedirect(admin_url(), '', new WP_Error('x')), 'login_redirect: nieudane logowanie — bez zmian');
 

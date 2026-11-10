@@ -128,6 +128,8 @@ class AppPages
 			'logoUrl' => $this->asset('resources/images/ubr-logo.png'),
 			'iconUrl' => $this->asset('resources/images/ubr-icon.png'),
 			// wp_logout_url() zwraca adres już zakodowany dla HTML (&amp;) — Blade koduje sam, więc dekodujemy (inaczej znika nonce).
+			// Link do kokpitu WordPressa tylko dla osób z uprawnieniami redakcyjnymi (administratorzy).
+			'wpAdminUrl' => current_user_can(AppLogin::adminCapability()) ? admin_url() : null,
 			'logoutUrl' => html_entity_decode(wp_logout_url(AppLogin::url(['loggedout' => '1'])), ENT_QUOTES | ENT_HTML5),
 			'config' => [
 				'restUrl' => esc_url_raw(rest_url('ubr/v1')),

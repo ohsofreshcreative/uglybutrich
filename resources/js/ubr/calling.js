@@ -12,6 +12,9 @@ import { automationMessage } from './claim.js';
 /** Zdarzenie dla list: dane Cold Calling zmieniły się (przeładuj stronę wyników bez utraty filtrów). */
 const changed = (companyId) => window.dispatchEvent(new CustomEvent('ubr:calling-changed', { detail: { companyId } }));
 
+/** Zdarzenie dla list: firma ma teraz opiekuna (Discover może ją od razu ukryć). */
+const claimed = (companyId) => window.dispatchEvent(new CustomEvent('ubr:company-claimed', { detail: { companyId } }));
+
 const READINESS_BADGE = { money: 'ubr-badge-confirmed', confirmed: 'ubr-badge-declared', uncertain: 'ubr-badge-uncertain', danger: 'ubr-badge-danger' };
 
 /** Numer w formacie do schowka (E.164 jest jednoznaczny; z numerem wewnętrznym — zapis czytelny). */
@@ -71,6 +74,7 @@ export function callingStore() {
           if (this.drawer.sales) this.loadSales();
         }
         changed(company.id);
+        claimed(company.id);
       } catch (e) {
         this.error(e);
         changed(company.id);
@@ -105,6 +109,7 @@ export function callingStore() {
         this.toast(`Zapisano wynik rozmowy: ${this.callOutcomes[this.outcome.value]}${res.claimed ? ' (firma przypisana do Ciebie)' : ''}.`);
         if (this.drawer.company?.id === this.outcome.company.id) this.drawer.sales = res;
         changed(this.outcome.company.id);
+        if (res.claimed) claimed(this.outcome.company.id);
         this.closeOutcome();
       } catch (e) {
         this.outcome.error = e.message;

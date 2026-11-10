@@ -52,7 +52,8 @@ class AppLogin
 	}
 
 	/**
-	 * Po zalogowaniu (także formularzem WordPressa) domyślnym celem jest aplikacja, nie /wp-admin/.
+	 * Po zalogowaniu (także formularzem WordPressa) domyślnym celem jest aplikacja, nie /wp-admin/ — chyba że
+	 * kokpit był celem wskazanym jawnie (redirect_to).
 	 *
 	 * @param WP_User|WP_Error $user
 	 */
@@ -62,9 +63,9 @@ class AppLogin
 			return $redirectTo;
 		}
 
-		$default = rtrim(admin_url(), '/');
-
-		if ($requested === '' || rtrim($requested, '/') === $default || rtrim($redirectTo, '/') === $default) {
+		// Bez wskazanego celu WordPress podstawia kokpit — wtedy aplikacja. Cel podany jawnie (np. wejście na /wp-admin/
+		// przed zalogowaniem) jest zachowany; członków bez uprawnień i tak zawraca keepMembersInApp().
+		if ($requested === '') {
 			return AppPages::url();
 		}
 

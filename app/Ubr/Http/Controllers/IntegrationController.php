@@ -33,10 +33,25 @@ class IntegrationController
 			'endpoint' => 'POST ' . ApolloProvider::BASE_URL . ApolloProvider::SEARCH_ENDPOINT,
 			'pricing_note' => 'Wg dokumentacji Apollo wyszukiwanie firm zużywa 1 kredyt za stronę wyników (do 100 firm na stronę). Zużycie kredytów zależy od planu Apollo i rodzaju wykonywanych operacji — Apollo nie raportuje zużytych kredytów w odpowiedzi API.',
 			'budget' => $this->budget->remaining($ctx->organizationId),
+			// Limity zmienia tylko operator SaaS (to on płaci za klucz) — nie admin organizacji.
+			'can_edit_limits' => $ctx->can('integrations.manage') && user_can($ctx->userId, 'manage_options'),
 			'stats_organization' => $this->requests->stats('apollo', $ctx->organizationId),
 			// Zużycie całej instalacji (wszystkie organizacje) widzi tylko operator SaaS (administrator WordPressa).
 			'stats_global' => user_can($ctx->userId, 'manage_options') ? $this->requests->stats('apollo') : null,
 		];
+	}
+
+	public function saveLimits(WP_REST_Request $request): array
+	{
+		$ctx = $this->tenants->require('integrations.manage');
+
+		if (! user_can($ctx->userId, 'manage_options')) {
+			throw \App\Ubr\Support\UbrException::forbidden('Limity Apollo zmienia tylko operator aplikacji (administrator WordPressa).');
+		}
+
+		$params = (array) $request->get_json_params();
+
+		return ['budget' => $this->budget->saveOrganizationLimits($ctx->organizationId, (int) ($params['org_pages_per_day'] ?? -1), (int) ($params['org_pages_per_month'] ?? -1))];
 	}
 
 	public function test(WP_REST_Request $request): array

@@ -19,7 +19,7 @@
 				<label class="sr-only" for="ubr-history">Historia wyszukiwań</label>
 				<select id="ubr-history" class="ubr-input h-8 text-[12px] w-auto max-w-full sm:max-w-[320px]" x-show="history.length" @change="$event.target.value && open(Number($event.target.value))">
 					<option value="" x-text="'Historia wyszukiwań (' + history.length + ')'"></option>
-					<template x-for="s in history" :key="s.id"><option :value="s.id" :selected="search && search.id === s.id" x-text="'#' + s.id + ' · ' + s.label + ' · ' + s.results_count + ' firm · ' + $store.ubr.statusLabel(s.status)"></option></template>
+					<template x-for="s in history" :key="s.id"><option :value="s.id" :selected="search && search.id === s.id" x-text="'#' + s.id + ' · ' + s.label + ' · ' + s.results_count + ' firm · ' + $store.ubr.statusLabel(s.status) + (s.user_name ? ' — ' + s.user_name : '')"></option></template>
 				</select>
 				<button type="button" class="ubr-btn-ghost ubr-btn-sm" @click="toggleForm()" :aria-expanded="formOpen" aria-controls="ubr-form-body">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="size-3.5 transition" :class="formOpen ? 'rotate-180' : ''" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
@@ -73,6 +73,11 @@
 				<label class="flex items-start gap-2 text-[12px] text-ink-soft" x-show="form.size !== 'any'">
 					<input type="checkbox" class="ubr-checkbox mt-0.5" x-model="form.include_unknown_size">
 					<span>Uwzględnij firmy bez danych o zatrudnieniu <span class="text-ink-muted">(większość źródeł ich nie podaje)</span></span>
+				</label>
+
+				<label class="flex items-start gap-2 text-[12px] text-ink-soft">
+					<input type="checkbox" class="ubr-checkbox mt-0.5" x-model="form.skip_seen">
+					<span>Pomijaj znane firmy <span class="text-ink-muted">(z wcześniejszych wyszukiwań zespołu i przejęte; Apollo kontynuuje od kolejnej, jeszcze niepobranej strony wyników)</span></span>
 				</label>
 
 				<template x-if="options.loaded && !options.apollo.configured">
@@ -241,6 +246,17 @@
 								<option value="10">Strona 10+ lat</option>
 								<option value="unknown">Wiek nieznany</option>
 							</select>
+							<select class="ubr-input h-8 text-[12px] w-auto" x-model="hideFilters.hide_new_sites" @change="loadResults(1)" aria-label="Ukryj nowe strony" title="Na podstawie Website Age; strony o nieznanym wieku zostają widoczne">
+								<option value="">Nowe strony: pokaż</option>
+								<option value="new">Ukryj nowe (do ~2 lat)</option>
+								<option value="current">Ukryj nowe i aktualne (do ~4 lat)</option>
+							</select>
+							<label class="flex items-center gap-1.5 text-[12px] whitespace-nowrap" title="Strona nowoczesna technicznie (Website Age) albo słaby potencjał redesignu (Lead). To sygnały techniczne, nie ocena wyglądu.">
+								<input type="checkbox" class="ubr-checkbox" :checked="!!hideFilters.hide_polished" @change="hideFilters.hide_polished = $event.target.checked ? '1' : ''; loadResults(1)"> Ukryj dopracowane strony
+							</label>
+							<label class="flex items-center gap-1.5 text-[12px] whitespace-nowrap">
+								<input type="checkbox" class="ubr-checkbox" :checked="!!hideFilters.hide_claimed" @change="hideFilters.hide_claimed = $event.target.checked ? '1' : ''; loadResults(1)"> Ukryj przejęte
+							</label>
 							<select class="ubr-input h-8 text-[12px] w-auto" x-model="analysisFilters.min_opportunity" @change="loadResults(1)" aria-label="Minimalny Opportunity Score">
 								<option value="">Opportunity: dowolny</option>
 								<option value="40">Opportunity ≥ 40</option>

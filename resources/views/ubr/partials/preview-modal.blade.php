@@ -65,7 +65,14 @@
 		{{-- LIVE --}}
 		<template x-if="$store.ubr.preview.open && $store.ubr.preview.mode === 'live' && $store.ubr.preview.liveUrl">
 			<div class="flex-1 min-h-0 flex flex-col bg-canvas">
-				<p class="px-4 py-1.5 text-[11px] text-ink-muted bg-white border-b border-line">
+				<p class="px-4 py-2 text-[12px] bg-gold-soft text-gold-deep border-b border-line" x-show="$store.ubr.preview.blocked === 'frame'">
+					<strong>Ta strona nie pozwala wyświetlić się w innych aplikacjach</strong> (nagłówek X-Frame-Options / CSP — stan z analizy<span x-show="$store.ubr.preview.blockedAt" x-text="' z ' + $store.ubr.date($store.ubr.preview.blockedAt)"></span>), więc ramka poniżej może być pusta.
+					Użyj <button type="button" class="underline font-semibold" @click="$store.ubr.setPreviewMode('screenshot')">Screenshot</button> albo „Otwórz stronę”.
+				</p>
+				<p class="px-4 py-2 text-[12px] bg-gold-soft text-gold-deep border-b border-line" x-show="$store.ubr.preview.blocked === 'http'">
+					Strona działała podczas analizy tylko po http:// — przeglądarka może zablokować jej podgląd w aplikacji działającej na https. Użyj Screenshot albo „Otwórz stronę”.
+				</p>
+				<p class="px-4 py-1.5 text-[11px] text-ink-muted bg-white border-b border-line" x-show="!$store.ubr.preview.blocked">
 					Niektóre strony blokują podgląd w aplikacji. Jeśli witryna się nie wyświetla, wybierz
 					<button type="button" class="underline font-semibold hover:text-ink" @click="$store.ubr.setPreviewMode('screenshot')">Screenshot</button>
 					lub otwórz ją w nowej karcie.

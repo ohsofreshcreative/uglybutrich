@@ -26,6 +26,37 @@
 			<template x-for="(e, i) in a.evidence" :key="i"><li x-text="e.text"></li></template>
 		</ul>
 	</details>
+	{{-- Historia w Web Archive: oś czasu z listy kopii pobranej przez analizę wieku (bez nowych zapytań do archiwum) --}}
+	<div class="rounded-lg bg-canvas p-3 space-y-2 text-[12px]" x-show="a.timeline || a.archive_url" data-age-timeline>
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			<p class="font-semibold">Historia w Web Archive</p>
+			<a class="underline font-semibold" :href="$store.ubr.safeHref(a.archive_url)" target="_blank" rel="noopener noreferrer" x-show="a.archive_url">Wszystkie kopie (kalendarz)</a>
+		</div>
+		<template x-if="a.timeline">
+			<div class="space-y-2">
+				<p class="text-ink-muted" x-text="a.timeline.captures + ' kopii miesięcznych · od ' + a.timeline.first + ' do ' + a.timeline.last"></p>
+				<ul class="space-y-1">
+					<template x-for="(e, i) in a.timeline.events" :key="i">
+						<li class="flex gap-2">
+							<span class="tabular-nums text-ink-muted shrink-0 w-[60px]" x-text="e.date"></span>
+							<span class="min-w-0" :class="e.kind === 'redesign' ? 'font-semibold' : (e.kind === 'gap' ? 'text-gold-deep' : '')" x-text="e.text"></span>
+							<a class="underline shrink-0 ml-auto" :href="$store.ubr.safeHref(e.url)" target="_blank" rel="noopener noreferrer">kopia</a>
+						</li>
+					</template>
+				</ul>
+				<details>
+					<summary class="cursor-pointer font-semibold">Aktywność według lat</summary>
+					<ul class="mt-1 grid grid-cols-2 min-[480px]:grid-cols-3 gap-x-4 gap-y-0.5 text-ink-soft">
+						<template x-for="y in a.timeline.years" :key="y.year">
+							<li><span class="tabular-nums" x-text="y.year"></span>: <span x-text="y.captures + ' kopii, zmiany w ' + y.changes + ' mies.'"></span></li>
+						</template>
+					</ul>
+					<p class="mt-1 text-ink-muted">„Zmiana” = inna treść strony głównej niż w poprzedniej miesięcznej kopii (także drobna).</p>
+				</details>
+			</div>
+		</template>
+		<p class="text-ink-muted" x-show="!a.timeline">Oś czasu pojawi się po (ponownej) analizie wieku strony.</p>
+	</div>
 	<p class="text-[11px] text-ink-muted">Wiek nie przesądza o jakości strony — ocena jakości: Website Opportunity Score.</p>
 	<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="c.can_check_site_age && !(a.state === 'queued' || a.state === 'running')" :disabled="$store.ubr.drawer.ageBusy" @click="$store.ubr.checkSiteAge(!!a.checked_at)" x-text="a.checked_at ? 'Sprawdź ponownie' : 'Sprawdź wiek strony'" data-age-check></button>
 </section>

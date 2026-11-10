@@ -65,7 +65,7 @@ document.addEventListener('alpine:init', () => {
     ...callingStore(),
     toasts: [],
     drawer: { open: false, loading: false, saving: false, error: null, company: null, tab: 'company', analysis: null, analysisLoading: false, compare: null, compareIds: [], contacts: null, contactsLoading: false, sales: null, salesLoading: false, clickup: null, lead: null, leadLoading: false, phoneScan: null, apollo: null, apolloBusy: false, apolloConsent: false, apolloFocus: false, claim: null, claimBusy: false, ageBusy: false },
-    preview: { open: false, loading: false, company: null, liveUrl: null, openUrl: null, upgraded: false, analysis: null, mode: 'live', view: 'desktop', zoom: 1, fit: true, error: null, frameKey: 0, returnFocus: null },
+    preview: { open: false, loading: false, company: null, liveUrl: null, openUrl: null, upgraded: false, analysis: null, mode: 'live', view: 'desktop', zoom: 1, fit: true, error: null, frameKey: 0, returnFocus: null, blocked: null, blockedAt: null },
 
     toast(message, type = 'info') {
       const id = Date.now() + Math.random();
@@ -395,6 +395,8 @@ document.addEventListener('alpine:init', () => {
         error: null,
         frameKey: Date.now(),
         returnFocus: active || clicked,
+        blocked: null,
+        blockedAt: null,
       };
       document.documentElement.classList.add('overflow-hidden');
       // Fokus na „Zamknij” — ponawiane, bo przycisk staje się widoczny dopiero po starcie przejścia x-show.
@@ -409,12 +411,32 @@ document.addEventListener('alpine:init', () => {
         if (this.preview.company?.id !== company.id) return;
         this.preview.analysis = data.latest && Object.keys(data.latest.screenshots || {}).length ? data.latest : null;
         this.preview.active = data.active;
+        this.applyEmbedInfo(data.latest);
         if (!this.preview.analysis) this.preview.error = data.active ? 'Analiza strony trwa — screenshoty pojawią się po jej zakończeniu.' : 'Brak zapisanych screenshotów tej strony.';
       } catch (e) {
         this.preview.error = e.message;
       } finally {
         this.preview.loading = false;
       }
+    },
+    /**
+     * Wiedza z ostatniej analizy strony (bez nowych zapytań): adres docelowy po przekierowaniach (np. https / www)
+     * i to, czy strona zabrania osadzania (X-Frame-Options / CSP frame-ancestors) albo działa tylko po http.
+     * Zablokowana strona → od razu Screenshot (jeśli jest) i jasny komunikat zamiast pustej ramki.
+     */
+    applyEmbedInfo(latest) {
+      const info = latest?.preview;
+      if (!info) return;
+      const httpsApp = window.location.protocol === 'https:';
+      const target = safeWebsiteUrl(info.final_url || '');
+      if (target && !(httpsApp && target.startsWith('http:')) && target !== this.preview.liveUrl) {
+        this.preview.liveUrl = target;
+        this.preview.upgraded = false;
+        this.preview.frameKey = Date.now();
+      }
+      this.preview.blocked = info.embeddable === false ? 'frame' : httpsApp && target?.startsWith('http:') ? 'http' : null;
+      this.preview.blockedAt = latest.finished_at || null;
+      if (this.preview.blocked === 'frame' && this.preview.mode === 'live' && this.preview.analysis) this.preview.mode = 'screenshot';
     },
     setPreviewMode(mode) {
       if (mode === 'live' && !this.preview.liveUrl) return;
@@ -572,7 +594,7 @@ document.addEventListener('alpine:init', () => {
 
   Alpine.data('ubrDiscover', () => ({
     options: { loaded: false, industries: [], regions: [], sizes: [], providers: [], limits: [25, 50, 100, 250, 500], apollo: { configured: false } },
-    form: { industry: '', phrase: '', region: '', city: '', size: 'any', include_unknown_size: true, limit: 50, providers: [] },
+    form: { industry: '', phrase: '', region: '', city: '', size: 'any', include_unknown_size: true, limit: 50, providers: [], skip_seen: true },
     formError: null,
     starting: false,
     cancelling: false,
@@ -584,6 +606,8 @@ document.addEventListener('alpine:init', () => {
     resultFilter: 'all',
     resultSort: 'relevance',
     analysisFilters: { min_opportunity: '', confidence: '', min_findings: '', site_age: '' },
+    // Ukrywanie w wynikach: przejęte (domyślnie), nowe strony, dopracowane strony.
+    hideFilters: { hide_claimed: '1', hide_new_sites: '', hide_polished: '' },
     contactFilters: { has_contact: '', min_contact_score: '', contact_confidence: '', contact_role: '', min_contacts: '' },
     leadFilters: { min_lead: '', lead_confidence: '', redesign: '', recommendation: '', no_blockers: '' },
     callFilters: CALL_FILTERS(),
@@ -678,7 +702,7 @@ document.addEventListener('alpine:init', () => {
       this.refreshing = true;
       try {
         const data = await api(`/discovery/searches/${this.search.id}/results`, {
-          query: { ids: this.results.items.map((c) => c.id).join(','), changed_since: all ? '' : this.results.server_time || '', per_page: 100, filter: this.resultFilter, sort: this.resultSort, ...this.analysisFilters, ...this.contactFilters, ...this.leadFilters, ...this.callFilters },
+          query: { ids: this.results.items.map((c) => c.id).join(','), changed_since: all ? '' : this.results.server_time || '', per_page: 100, filter: this.resultFilter, sort: this.resultSort, ...this.analysisFilters, ...this.hideFilters, ...this.contactFilters, ...this.leadFilters, ...this.callFilters },
         });
         if (data.server_time) this.results.server_time = data.server_time;
         for (const row of data.items || []) {
@@ -750,6 +774,16 @@ document.addEventListener('alpine:init', () => {
       window.addEventListener('ubr:prospect-saved', (e) => {
         const row = this.results.items.find((c) => c.id === e.detail.companyId);
         if (row) row.prospect_id = e.detail.prospectId;
+      });
+      // Przejęta firma znika z listy od razu (bez czekania na przeładowanie), gdy włączone „Ukryj przejęte”.
+      window.addEventListener('ubr:company-claimed', (e) => {
+        if (!this.hideFilters.hide_claimed) return;
+        const before = this.results.items.length;
+        this.results.items = this.results.items.filter((c) => c.id !== e.detail.companyId);
+        if (this.results.items.length < before) {
+          this.results.total = Math.max(0, this.results.total - 1);
+          this.selected = this.selected.filter((id) => id !== e.detail.companyId);
+        }
       });
       window.addEventListener('ubr:company-verified', () => this.search && this.refreshChanged(true));
       window.addEventListener('ubr:analysis-queued', () => this.search && this.loadResults(this.results.page || 1, true));
@@ -845,7 +879,7 @@ document.addEventListener('alpine:init', () => {
       const seq = (this.listSeq = (this.listSeq || 0) + 1);
       try {
         const data = await api(`/discovery/searches/${this.search.id}/results`, {
-          query: { page, per_page: this.results.per_page, filter: this.resultFilter, sort: this.resultSort, ...this.analysisFilters, ...this.contactFilters, ...this.leadFilters, ...this.callFilters },
+          query: { page, per_page: this.results.per_page, filter: this.resultFilter, sort: this.resultSort, ...this.analysisFilters, ...this.hideFilters, ...this.contactFilters, ...this.leadFilters, ...this.callFilters },
         });
         // Odpowiedź starszego żądania (np. odpytywanie w tle sprzed zmiany liczby wyników / filtra) nie nadpisuje nowszej listy.
         if (seq !== this.listSeq) return;
@@ -1011,6 +1045,7 @@ document.addEventListener('alpine:init', () => {
     apolloBusy: false,
     apolloResult: null,
     confirmSearchTest: false,
+    apolloLimits: { org_pages_per_day: 0, org_pages_per_month: 0 },
 
     analyzer: null,
     analyzerBusy: false,
@@ -1044,8 +1079,22 @@ document.addEventListener('alpine:init', () => {
     async loadApollo() {
       try {
         this.apollo = await api('/integrations/apollo');
+        this.apolloLimits = { org_pages_per_day: this.apollo.budget.org_pages_per_day, org_pages_per_month: this.apollo.budget.org_pages_per_month };
       } catch (e) {
         this.apollo = null;
+      }
+    },
+
+    async saveApolloLimits() {
+      this.apolloBusy = true;
+      try {
+        const r = await api('/integrations/apollo/limits', { method: 'POST', body: this.apolloLimits });
+        this.apollo.budget = r.budget;
+        this.apolloLimits = { org_pages_per_day: r.budget.org_pages_per_day, org_pages_per_month: r.budget.org_pages_per_month };
+      } catch (e) {
+        this.$store.ubr.error(e);
+      } finally {
+        this.apolloBusy = false;
       }
     },
 

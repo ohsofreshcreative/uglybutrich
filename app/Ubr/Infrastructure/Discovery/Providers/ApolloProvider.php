@@ -120,6 +120,17 @@ class ApolloProvider implements DiscoveryProvider
 	}
 
 	/**
+	 * Klucz postępu stronicowania organizacji dla danych kryteriów (te same filtry Apollo = ta sama lista wyników).
+	 */
+	public static function progressKey(int $organizationId, DiscoveryCriteria $criteria, self $provider): string
+	{
+		$params = $provider->buildParams($criteria, 1, 1);
+		unset($params['page'], $params['per_page']);
+
+		return 'ubr_apollo_progress_' . $organizationId . '_' . md5(self::queryString($params));
+	}
+
+	/**
 	 * @param array<string, string|list<string>> $params
 	 */
 	public static function queryString(array $params): string
@@ -140,11 +151,27 @@ class ApolloProvider implements DiscoveryProvider
 		$apiKey = self::apiKey() ?? throw new ProviderException('Apollo nie jest skonfigurowane (brak UBR_APOLLO_API_KEY).', false);
 		$organizationId = isset($cursor['_organization_id']) ? (int) $cursor['_organization_id'] : null;
 		$searchId = isset($cursor['_search_id']) ? (int) $cursor['_search_id'] : null;
-		$page = max(1, (int) ($cursor['page'] ?? 1));
 		$plan = $this->budget->plan($criteria->limit);
 		$limits = $this->budget->limits($organizationId);
-
 		$maxPages = min($limits['max_pages_per_search'], $plan['pages']);
+		$continue = ! empty($cursor['_skip_seen']) && $organizationId;
+		$progressKey = $continue ? self::progressKey($organizationId, $criteria, $this) : null;
+
+		// Kolejne wyszukiwanie z tymi samymi kryteriami zaczyna od pierwszej strony, której organizacja jeszcze nie pobrała
+		// (zamiast znowu od strony 1 → te same firmy i te same kredyty).
+		if (isset($cursor['page'])) {
+			$page = max(1, (int) $cursor['page']);
+			$start = max(1, (int) ($cursor['start'] ?? 1));
+		} else {
+			$progress = $progressKey ? (array) get_option($progressKey, []) : [];
+			$offset = (int) ($progress['offset'] ?? 0);
+
+			if ($progressKey && isset($progress['total_entries']) && $offset >= (int) $progress['total_entries']) {
+				throw new ProviderException(sprintf('Wszystkie firmy Apollo dla tych kryteriów (%d) zostały już pobrane we wcześniejszych wyszukiwaniach. Zmień kryteria (np. województwo, wielkość) albo wyłącz „Pomijaj znane firmy”, żeby zacząć od początku.', (int) $progress['total_entries']), false);
+			}
+
+			$page = $start = intdiv($offset, $plan['per_page']) + 1;
+		}
 
 		$params = $this->buildParams($criteria, $page, $plan['per_page']);
 		$url = self::BASE_URL . self::SEARCH_ENDPOINT . '?' . self::queryString($params);
@@ -223,8 +250,17 @@ class ApolloProvider implements DiscoveryProvider
 			$candidates[] = $candidate;
 		}
 
-		$next = ($rows !== [] && $page < $maxPages && ($totalPages === 0 || $page < $totalPages))
-			? ['page' => $page + 1]
+		if ($progressKey) {
+			$progress = (array) get_option($progressKey, []);
+			update_option($progressKey, [
+				'offset' => max((int) ($progress['offset'] ?? 0), ($page - 1) * $plan['per_page'] + count($rows)),
+				'total_entries' => isset($pagination['total_entries']) ? (int) $pagination['total_entries'] : ($progress['total_entries'] ?? null),
+				'updated_at' => gmdate('Y-m-d H:i:s'),
+			], false);
+		}
+
+		$next = ($rows !== [] && $page < $start + $maxPages - 1 && ($totalPages === 0 || $page < $totalPages))
+			? ['page' => $page + 1, 'start' => $start]
 			: null;
 
 		return new ProviderPage($candidates, $next, [

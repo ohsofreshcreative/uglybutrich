@@ -173,6 +173,7 @@ class DiscoveryRunner
 				'_attempt' => (int) ($state['attempts'][$key] ?? 0),
 				'_organization_id' => (int) $search['organization_id'],
 				'_search_id' => $searchId,
+				'_skip_seen' => $criteria->skipSeen,
 			] + (array) $state['cursor']);
 		} catch (ProviderException $e) {
 			$attempt = (int) ($state['attempts'][$key] ?? 0) + 1;
@@ -198,6 +199,7 @@ class DiscoveryRunner
 		$existing = 0;
 		$skippedSize = 0;
 		$alreadyInSearch = 0;
+		$alreadySeen = 0;
 		$added = [];
 		$position = $this->results->countForSearch($searchId);
 
@@ -216,6 +218,12 @@ class DiscoveryRunner
 				$ingested = $this->ingest->ingest($candidate, $searchId);
 			} catch (Throwable $e) {
 				$this->events->log($searchId, 'warning', sprintf('Nie zapisano "%s": %s', mb_substr($candidate->name, 0, 80), $e->getMessage()));
+				continue;
+			}
+
+			// Firma z wcześniejszego wyszukiwania organizacji albo już przejęta — nie pokazujemy jej ponownie.
+			if ($criteria->skipSeen && $this->results->seenByOrganization((int) $search['organization_id'], (int) $ingested['company_id'], $searchId)) {
+				$alreadySeen++;
 				continue;
 			}
 
@@ -252,6 +260,10 @@ class DiscoveryRunner
 
 		if ($skippedSize) {
 			$rejected['size_mismatch'] = (int) ($rejected['size_mismatch'] ?? 0) + $skippedSize;
+		}
+
+		if ($alreadySeen) {
+			$rejected['already_seen'] = (int) ($rejected['already_seen'] ?? 0) + $alreadySeen;
 		}
 
 		if ($alreadyInSearch) {
@@ -296,7 +308,7 @@ class DiscoveryRunner
 			$saved,
 			$new,
 			$existing,
-			$skippedSize ? sprintf(', poza zakresem wielkości: %d', $skippedSize) : '',
+			($skippedSize ? sprintf(', poza zakresem wielkości: %d', $skippedSize) : '') . ($alreadySeen ? sprintf(', pominięte jako znane (wcześniejsze wyszukiwania / przejęte): %d', $alreadySeen) : ''),
 			! empty($page->meta['rejected']) ? ', odrzucone: ' . self::reasonsLabel((array) $page->meta['rejected']) : ''
 		));
 
@@ -442,6 +454,7 @@ class DiscoveryRunner
 			'invalid_record' => 'niekompletny rekord',
 			'duplicate_in_page' => 'duplikat w odpowiedzi źródła',
 			'duplicate_in_search' => 'już w wynikach (inne źródło)',
+			'already_seen' => 'znane z wcześniejszych wyszukiwań lub przejęte',
 		];
 		$parts = [];
 

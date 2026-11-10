@@ -63,6 +63,12 @@
 						@endif
 					</button>
 				@endforeach
+				@if (! empty($wpAdminUrl))
+					<a href="{{ $wpAdminUrl }}" class="flex items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-white/60 hover:bg-white/5 hover:text-white" data-wp-admin-link>
+						@include('ubr.partials.icon', ['name' => 'settings'])
+						Panel WordPress
+					</a>
+				@endif
 				<a href="{{ $logoutUrl }}" class="flex items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-white/60 hover:bg-white/5 hover:text-white">
 					@include('ubr.partials.icon', ['name' => 'logout'])
 					Wyloguj

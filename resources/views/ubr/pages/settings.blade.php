@@ -90,7 +90,21 @@
 						<div><dt class="text-[12px] text-ink-muted">Endpoint wyszukiwania</dt><dd class="font-mono text-[12px]" x-text="apollo.endpoint"></dd></div>
 						<div><dt class="text-[12px] text-ink-muted">Limit organizacji</dt><dd><strong x-text="apollo.budget.org_pages_used_today"></strong> / <span x-text="apollo.budget.org_pages_per_day"></span> stron dziś · <strong x-text="apollo.budget.org_pages_used_month"></strong> / <span x-text="apollo.budget.org_pages_per_month"></span> w miesiącu</dd></div>
 						<div><dt class="text-[12px] text-ink-muted">Limit na wyszukiwanie</dt><dd><span x-text="apollo.budget.max_pages_per_search"></span> stron (do <span x-text="apollo.budget.max_pages_per_search * 100"></span> firm)</dd></div>
+						<div><dt class="text-[12px] text-ink-muted">Limit całej instalacji</dt><dd><strong x-text="apollo.budget.global_pages_used_today"></strong> / <span x-text="apollo.budget.global_pages_per_day"></span> stron dziś</dd></div>
 					</dl>
+
+					<form class="grid gap-3 sm:grid-cols-[160px_160px_auto] items-end" x-show="apollo.can_edit_limits" @submit.prevent="saveApolloLimits()">
+						<div>
+							<label class="ubr-label" for="apollo-day">Stron dziennie</label>
+							<input id="apollo-day" class="ubr-input" type="number" min="0" max="1000" required x-model.number="apolloLimits.org_pages_per_day">
+						</div>
+						<div>
+							<label class="ubr-label" for="apollo-month">Stron miesięcznie</label>
+							<input id="apollo-month" class="ubr-input" type="number" min="0" max="20000" required x-model.number="apolloLimits.org_pages_per_month">
+						</div>
+						<button class="ubr-btn-primary" :disabled="apolloBusy">Zapisz limity</button>
+						<p class="sm:col-span-3 text-[11px] text-ink-muted">Limity wyszukiwania firm tej organizacji (1 strona ≈ 1 kredyt Apollo). Zmiana nie zeruje wykorzystania. Widoczne tylko dla operatora aplikacji.</p>
+					</form>
 					<p class="text-[12px] text-ink-muted" x-text="apollo.pricing_note"></p>
 
 					<div class="grid gap-3 sm:grid-cols-4">

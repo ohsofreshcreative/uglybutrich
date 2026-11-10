@@ -11,7 +11,9 @@ use App\Ubr\Infrastructure\Repositories\OrganizationRepository;
  *
  * Wg dokumentacji Apollo wyszukiwanie organizacji (`mixed_companies/search`) zużywa 1 kredyt za stronę wyników.
  * Limitujemy więc liczbę płatnych stron: na wyszukiwanie, na organizację (dzień/miesiąc) i globalnie (dzień).
- * Wartości domyślne można zmienić filtrem `ubr/apollo/limits` (np. per plan organizacji) lub stałymi w wp-config.php.
+ * Kolejność (od najważniejszej): filtr `ubr/apollo/limits` → ustawienia organizacji (`ubr_organizations.settings.apollo`,
+ * zmienia tylko operator SaaS w Settings → Apollo) → stałe w wp-config.php → wartości domyślne.
+ * Wykorzystanie liczone zawsze z `ubr_api_requests` — zmiana limitów nie zeruje statystyk.
  */
 class ApolloBudget
 {
@@ -22,6 +24,15 @@ class ApolloBudget
 
 	/** Twardy limit stron na jedno wyszukiwanie (500 firm). */
 	public const MAX_PAGES_PER_SEARCH = 5;
+
+	public const DEFAULT_ORG_PAGES_PER_DAY = 100;
+
+	public const DEFAULT_ORG_PAGES_PER_MONTH = 2000;
+
+	/** Górne granice wartości wpisywanych w ustawieniach (ochrona przed literówką). */
+	public const MAX_SETTING_PER_DAY = 1000;
+
+	public const MAX_SETTING_PER_MONTH = 20000;
 
 	public function __construct(
 		private ApiRequestRepository $requests,
@@ -34,15 +45,40 @@ class ApolloBudget
 	 */
 	public function limits(?int $organizationId): array
 	{
-		$plan = $organizationId ? (string) ($this->organizations->find($organizationId)['plan'] ?? 'internal') : 'internal';
+		$org = $organizationId ? $this->organizations->find($organizationId) : null;
+		$plan = (string) ($org['plan'] ?? 'internal');
+		$stored = (array) ($org['settings']['apollo'] ?? []);
 		$defaults = [
 			'max_pages_per_search' => self::MAX_PAGES_PER_SEARCH,
-			'org_pages_per_day' => defined('UBR_APOLLO_ORG_PAGES_PER_DAY') ? (int) UBR_APOLLO_ORG_PAGES_PER_DAY : 30,
-			'org_pages_per_month' => defined('UBR_APOLLO_ORG_PAGES_PER_MONTH') ? (int) UBR_APOLLO_ORG_PAGES_PER_MONTH : 300,
+			'org_pages_per_day' => isset($stored['org_pages_per_day']) ? (int) $stored['org_pages_per_day'] : (defined('UBR_APOLLO_ORG_PAGES_PER_DAY') ? (int) UBR_APOLLO_ORG_PAGES_PER_DAY : self::DEFAULT_ORG_PAGES_PER_DAY),
+			'org_pages_per_month' => isset($stored['org_pages_per_month']) ? (int) $stored['org_pages_per_month'] : (defined('UBR_APOLLO_ORG_PAGES_PER_MONTH') ? (int) UBR_APOLLO_ORG_PAGES_PER_MONTH : self::DEFAULT_ORG_PAGES_PER_MONTH),
 			'global_pages_per_day' => defined('UBR_APOLLO_GLOBAL_PAGES_PER_DAY') ? (int) UBR_APOLLO_GLOBAL_PAGES_PER_DAY : 100,
 		];
 
 		return apply_filters('ubr/apollo/limits', $defaults, $plan, $organizationId);
+	}
+
+	/**
+	 * Zapis limitów organizacji w jej ustawieniach. Nie dotyka zapisanych zapytań (statystyki zostają).
+	 *
+	 * @return array<string, mixed>
+	 */
+	public function saveOrganizationLimits(int $organizationId, int $perDay, int $perMonth): array
+	{
+		if ($perDay < 0 || $perDay > self::MAX_SETTING_PER_DAY || $perMonth < 0 || $perMonth > self::MAX_SETTING_PER_MONTH) {
+			throw \App\Ubr\Support\UbrException::invalid(sprintf('Limit dzienny 0–%d, miesięczny 0–%d stron.', self::MAX_SETTING_PER_DAY, self::MAX_SETTING_PER_MONTH));
+		}
+
+		if ($perDay > $perMonth) {
+			throw \App\Ubr\Support\UbrException::invalid('Limit dzienny nie może być większy niż miesięczny.');
+		}
+
+		$org = $this->organizations->find($organizationId);
+		$settings = (array) ($org['settings'] ?? []);
+		$settings['apollo'] = ['org_pages_per_day' => $perDay, 'org_pages_per_month' => $perMonth];
+		$this->organizations->update($organizationId, ['settings' => $settings]);
+
+		return $this->remaining($organizationId);
 	}
 
 	/**
@@ -96,6 +132,7 @@ class ApolloBudget
 		return $limits + [
 			'org_pages_used_today' => $usedDay,
 			'org_pages_used_month' => $usedMonth,
+			'global_pages_used_today' => $this->requests->countBillable(self::PROVIDER, gmdate('Y-m-d 00:00:00')),
 			'org_pages_left_today' => max(0, min($limits['org_pages_per_day'] - $usedDay, $limits['org_pages_per_month'] - $usedMonth)),
 		];
 	}

@@ -41,6 +41,8 @@ final class DiscoveryCriteria
 		public readonly bool $includeUnknownSize,
 		public readonly int $limit,
 		public readonly array $providers,
+		// Pomijaj firmy znane już organizacji (wyniki wcześniejszych wyszukiwań, przejęte) i kontynuuj stronicowanie Apollo.
+		public readonly bool $skipSeen = true,
 	) {
 	}
 
@@ -93,7 +95,7 @@ final class DiscoveryCriteria
 			throw UbrException::invalid('Wybierz co najmniej jedno dostępne źródło danych.');
 		}
 
-		$criteria = new self($industry, $phrase, $region, $city, $size, (bool) ($input['include_unknown_size'] ?? true), max(10, min(500, $limit)), $providers);
+		$criteria = new self($industry, $phrase, $region, $city, $size, (bool) ($input['include_unknown_size'] ?? true), max(10, min(500, $limit)), $providers, (bool) ($input['skip_seen'] ?? true));
 
 		if ($criteria->terms() === []) {
 			throw UbrException::invalid('Podaj branżę albo frazę opisującą działalność (min. 4 znaki, niezbyt ogólną).');
@@ -116,6 +118,7 @@ final class DiscoveryCriteria
 			(bool) ($data['include_unknown_size'] ?? true),
 			(int) ($data['limit'] ?? 100),
 			(array) ($data['providers'] ?? []),
+			(bool) ($data['skip_seen'] ?? false),
 		);
 	}
 
@@ -133,6 +136,7 @@ final class DiscoveryCriteria
 			'include_unknown_size' => $this->includeUnknownSize,
 			'limit' => $this->limit,
 			'providers' => $this->providers,
+			'skip_seen' => $this->skipSeen,
 		];
 	}
 

@@ -123,6 +123,23 @@ class ResultRepository
 		);
 	}
 
+	/**
+	 * Firma jest już znana organizacji: wystąpiła w jej innym wyszukiwaniu albo ma aktywnego opiekuna (przejęta).
+	 * Używane przy „Pomijaj znane firmy” — nowe wyszukiwanie pokazuje tylko firmy, których zespół jeszcze nie widział.
+	 */
+	public function seenByOrganization(int $organizationId, int $companyId, int $exceptSearchId): bool
+	{
+		return (bool) $this->db->value(
+			"SELECT EXISTS (SELECT 1 FROM {$this->db->table(Tables::RESULTS)} WHERE organization_id = %d AND company_id = %d AND search_id <> %d)
+				OR EXISTS (SELECT 1 FROM {$this->db->table(Tables::PROSPECTS)} WHERE organization_id = %d AND company_id = %d AND archived_at IS NULL AND owner_user_id IS NOT NULL)",
+			$organizationId,
+			$companyId,
+			$exceptSearchId,
+			$organizationId,
+			$companyId
+		);
+	}
+
 	public function countForSearch(int $searchId): int
 	{
 		return (int) $this->db->value("SELECT COUNT(*) FROM {$this->db->table(Tables::RESULTS)} WHERE search_id = %d", $searchId);
@@ -170,6 +187,36 @@ class ResultRepository
 		return $value === 'unknown' ? " AND (c.site_age_status IS NULL OR c.site_age_status = 'UNKNOWN')" : '';
 	}
 
+	/**
+	 * Ukrywanie w wynikach Discover (zapisane dane — filtr niczego nie uruchamia):
+	 * - przejęte: aktywny prospekt organizacji z opiekunem,
+	 * - nowe strony: Website Age NEW (≤ 2 lata) albo NEW + CURRENT (≤ 4 lata); wiek nieznany zostaje widoczny,
+	 * - dopracowane strony: nowoczesne technicznie (Website Age) albo słaby potencjał redesignu (Lead Intelligence).
+	 *   To sygnały techniczne i ocena strony, nie ocena wyglądu (AI Vision jest wyłączone).
+	 *
+	 * @param array<string, mixed> $extra
+	 */
+	public static function hideWhere(array $extra): string
+	{
+		$w = '';
+
+		if (! empty($extra['hide_claimed'])) {
+			$w .= ' AND NOT (p.id IS NOT NULL AND p.archived_at IS NULL AND p.owner_user_id IS NOT NULL)';
+		}
+
+		$w .= match ($extra['hide_new_sites'] ?? '') {
+			'new' => " AND COALESCE(c.site_age_status, '') <> 'NEW'",
+			'current' => " AND COALESCE(c.site_age_status, '') NOT IN ('NEW','CURRENT')",
+			default => '',
+		};
+
+		if (! empty($extra['hide_polished'])) {
+			$w .= " AND COALESCE(c.site_modernity, '') <> 'modern' AND COALESCE(li.redesign, '') <> 'weak'";
+		}
+
+		return $w;
+	}
+
 	public function paginate(int $searchId, int $organizationId, int $page, int $perPage, string $filter = 'all', string $sort = 'relevance', array $extra = []): array
 	{
 		$where = 'r.search_id = %d AND r.organization_id = %d';
@@ -193,6 +240,8 @@ class ResultRepository
 
 		// Prompt 10.4.3 — wiek strony (zapisane wyniki Website Age Intelligence; filtr nie uruchamia analiz).
 		$where .= self::siteAgeWhere((string) ($extra['site_age'] ?? ''), $args);
+
+		$where .= self::hideWhere($extra);
 
 		// Filtry Decision Maker Findera.
 		$where .= ContactFilters::where($extra, $args);

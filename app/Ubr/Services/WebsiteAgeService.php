@@ -482,6 +482,8 @@ class WebsiteAgeService
 				'samples' => $e['samples'],
 				'evidence' => array_slice($e['evidence'], 0, 20),
 				'sources' => array_values(array_unique(array_merge($e['archive'] === 'ok' ? ['Wayback Machine (Internet Archive)'] : [], ! empty($work['tech']) ? ['Analiza HTML / CSS / JS obecnej strony'] : []))),
+				// Oś czasu z już pobranej listy kopii (bez dodatkowych zapytań do archiwum).
+				'timeline' => self::timeline((array) ($work['captures'] ?? []), (string) $company['domain'], $pairs),
 			]),
 			'site_age_checked_at' => Db::now(),
 		]);
@@ -522,6 +524,8 @@ class WebsiteAgeService
 			'evidence' => array_values((array) ($evidence['evidence'] ?? [])),
 			'samples' => array_values((array) ($evidence['samples'] ?? [])),
 			'earlier_redesigns' => (int) ($evidence['earlier_redesigns'] ?? 0),
+			'timeline' => ! empty($evidence['timeline']) ? $evidence['timeline'] : self::cachedTimeline((string) ($company['domain'] ?? '')),
+			'archive_url' => ! empty($company['domain']) ? self::archiveUrl((string) $company['domain']) : null,
 			'checked_at' => ! empty($company['site_age_checked_at']) ? gmdate('c', strtotime($company['site_age_checked_at'] . ' UTC')) : null,
 			'short' => self::shortFor($company),
 		];
@@ -541,6 +545,118 @@ class WebsiteAgeService
 		}
 
 		return AgeEstimator::short($r['site_age_status'] ?? null, self::intOrNull($r['site_launch_year'] ?? null), self::intOrNull($r['site_launch_from'] ?? null), self::intOrNull($r['site_launch_to'] ?? null), isset($r['site_age_years']) && $r['site_age_years'] !== null ? (int) $r['site_age_years'] : null);
+	}
+
+	/** Kalendarz wszystkich kopii domeny w Wayback Machine. */
+	public static function archiveUrl(string $domain): string
+	{
+		return WaybackClient::BASE . '/web/*/' . rawurlencode(strtolower($domain));
+	}
+
+	public static function snapshotUrl(string $ts, string $domain): string
+	{
+		return WaybackClient::BASE . '/web/' . $ts . '/' . rawurlencode(strtolower($domain)) . '/';
+	}
+
+	/**
+	 * Historia strony z listy miesięcznych kopii (CDX: jedna kopia na miesiąc + skrót treści):
+	 * - lata: liczba kopii i miesięcy ze zmianą treści (inny skrót niż w poprzedniej kopii),
+	 * - zdarzenia: pierwsza / najnowsza kopia, zmiany projektu (porównania odcisków), przerwy > 12 mies. bez kopii
+	 *   (strona mogła nie działać albo archiwum jej nie odwiedzało), rok z największą liczbą zmian.
+	 * Każde zdarzenie ma link do kopii w archiwum — szybki podgląd, jak strona wyglądała wtedy.
+	 *
+	 * @param list<array{ts: string, digest: string}> $captures najstarsze → najnowsze
+	 * @param list<array{newer: string, older: string, verdict: string}> $pairs
+	 * @return array<string, mixed>|null
+	 */
+	public static function timeline(array $captures, string $domain, array $pairs = []): ?array
+	{
+		$captures = array_values(array_filter($captures, fn ($c) => preg_match('/^\d{14}$/', (string) ($c['ts'] ?? ''))));
+
+		if ($captures === [] || $domain === '') {
+			return null;
+		}
+
+		$years = [];
+		$events = [];
+		$prev = null;
+
+		foreach ($captures as $c) {
+			$y = (int) substr($c['ts'], 0, 4);
+			$years[$y] ??= ['year' => $y, 'captures' => 0, 'changes' => 0];
+			$years[$y]['captures']++;
+
+			if ($prev !== null) {
+				if ($c['digest'] !== '' && $c['digest'] !== $prev['digest']) {
+					$years[$y]['changes']++;
+				}
+
+				$gap = AgeEstimator::months($prev['ts'], $c['ts']);
+
+				if ($gap > 12) {
+					$events[] = ['ts' => $c['ts'], 'kind' => 'gap', 'text' => sprintf('Brak kopii przez %d mies. (%s – %s) — strona mogła nie działać albo archiwum jej nie odwiedzało', $gap, AgeEstimator::date($prev['ts']), AgeEstimator::date($c['ts']))];
+				}
+			}
+
+			$prev = $c;
+		}
+
+		foreach ($pairs as $p) {
+			if (($p['verdict'] ?? '') === 'major') {
+				$events[] = ['ts' => (string) $p['newer'], 'kind' => 'redesign', 'text' => sprintf('Zmiana projektu strony między %s a %s', AgeEstimator::date((string) $p['older']), AgeEstimator::date((string) $p['newer']))];
+			}
+		}
+
+		$first = $captures[0];
+		$last = end($captures);
+		$events[] = ['ts' => $first['ts'], 'kind' => 'first', 'text' => 'Pierwsza kopia w archiwum'];
+
+		if ($last['ts'] !== $first['ts']) {
+			$events[] = ['ts' => $last['ts'], 'kind' => 'last', 'text' => 'Najnowsza kopia w archiwum'];
+		}
+
+		$busiest = null;
+
+		foreach ($years as $y) {
+			if ($y['changes'] >= 3 && ($busiest === null || $y['changes'] > $busiest['changes'])) {
+				$busiest = $y;
+			}
+		}
+
+		if ($busiest) {
+			foreach ($captures as $c) {
+				if ((int) substr($c['ts'], 0, 4) === $busiest['year']) {
+					$events[] = ['ts' => $c['ts'], 'kind' => 'busy', 'text' => sprintf('Najwięcej zmian treści: %d (%d mies. ze zmianą)', $busiest['year'], $busiest['changes'])];
+					break;
+				}
+			}
+		}
+
+		usort($events, fn ($a, $b) => strcmp($b['ts'], $a['ts']));
+
+		foreach ($events as &$event) {
+			$event['date'] = AgeEstimator::date($event['ts']);
+			$event['url'] = self::snapshotUrl($event['ts'], $domain);
+		}
+
+		unset($event);
+		krsort($years);
+
+		return [
+			'captures' => count($captures),
+			'first' => AgeEstimator::date($first['ts']),
+			'last' => AgeEstimator::date($last['ts']),
+			'years' => array_values($years),
+			'events' => array_slice($events, 0, 20),
+		];
+	}
+
+	/** Oś czasu z listy kopii w cache (starsze wyniki bez zapisanej osi) — bez zapytania do archiwum. */
+	private static function cachedTimeline(string $domain): ?array
+	{
+		$captures = $domain !== '' ? get_transient('ubr_wb_cap_' . md5(strtolower(trim($domain)))) : false;
+
+		return is_array($captures) ? self::timeline($captures, $domain) : null;
 	}
 
 	private static function intOrNull(mixed $v): ?int

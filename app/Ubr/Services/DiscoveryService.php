@@ -81,7 +81,7 @@ class DiscoveryService
 		$this->events->log($id, 'info', 'Zadanie dodane do kolejki (' . $this->dispatcher->driver() . ').', ['terms' => $criteria->terms()]);
 		$this->dispatcher->dispatch($id);
 
-		return $this->present($this->searches->find($id));
+		return $this->present(['user_name' => wp_get_current_user()->display_name ?: null] + (array) $this->searches->find($id));
 	}
 
 	/**

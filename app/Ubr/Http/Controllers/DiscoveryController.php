@@ -68,6 +68,9 @@ class DiscoveryController
 				'contact_confidence' => sanitize_key((string) $request->get_param('contact_confidence')),
 				'contact_role' => sanitize_key((string) $request->get_param('contact_role')),
 				'site_age' => sanitize_key((string) $request->get_param('site_age')),
+				'hide_claimed' => (bool) $request->get_param('hide_claimed'),
+				'hide_new_sites' => sanitize_key((string) $request->get_param('hide_new_sites')),
+				'hide_polished' => (bool) $request->get_param('hide_polished'),
 				// Prompt 10.4: lekkie odświeżanie (identyfikatory widocznych firm + czas ostatniego odświeżenia, UTC).
 				'ids' => array_slice(array_map('intval', array_filter(explode(',', (string) $request->get_param('ids')))), 0, 100),
 				'changed_since' => (string) $request->get_param('changed_since'),

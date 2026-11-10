@@ -132,6 +132,7 @@ return [
 	['POST', '/clickup/rules/(?P<id>\d+)/backfill', [ClickUpController::class, 'backfillRule'], 'clickup.rules'],
 
 	['GET', '/integrations/apollo', [IntegrationController::class, 'apollo'], 'integrations.view'],
+	['POST', '/integrations/apollo/limits', [IntegrationController::class, 'saveLimits'], 'integrations.manage'],
 	['POST', '/integrations/apollo/test', [IntegrationController::class, 'test'], 'integrations.manage'],
 	['POST', '/integrations/apollo/test-search', [IntegrationController::class, 'testSearch'], 'integrations.manage'],
 	['POST', '/integrations/apollo/people-test', [IntegrationController::class, 'peopleTest'], 'integrations.manage'],
