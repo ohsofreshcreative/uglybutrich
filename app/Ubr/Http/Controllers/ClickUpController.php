@@ -64,6 +64,21 @@ class ClickUpController
 	}
 
 	/** Prompt 10.4.3 — zadania ClickUp po „Przejmij firmę” (ustawienie organizacji, owner / admin). */
+	public function statusSync(WP_REST_Request $request): array
+	{
+		return app(\App\Ubr\Services\ClickUpStatusSyncService::class)->status($this->tenants->require('clickup.connect'));
+	}
+
+	public function saveStatusSync(WP_REST_Request $request): array
+	{
+		return app(\App\Ubr\Services\ClickUpStatusSyncService::class)->save($this->tenants->require('organization.update'), (array) $request->get_json_params());
+	}
+
+	public function runStatusSync(WP_REST_Request $request): array
+	{
+		return app(\App\Ubr\Services\ClickUpStatusSyncService::class)->runSoon($this->tenants->require('organization.update'));
+	}
+
 	public function saveClaimSync(WP_REST_Request $request): array
 	{
 		return app(\App\Ubr\Services\ClickUpExportService::class)->saveClaimSync($this->tenants->require('organization.update'), (array) $request->get_json_params());

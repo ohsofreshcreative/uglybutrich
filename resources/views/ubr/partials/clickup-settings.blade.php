@@ -181,6 +181,52 @@
 				</div>
 			</template>
 
+			{{-- Status zadania w ClickUp → status w Prospects (+ opcjonalnie szkic sekwencji); kierunek tylko ClickUp → aplikacja --}}
+			<template x-if="statusSync">
+				<div class="rounded-xl border border-line p-4 space-y-3" data-clickup-status-sync>
+					<div class="flex flex-wrap items-center gap-2">
+						<h3 class="font-extrabold text-[14px] flex-1">Statusy z ClickUp → Prospects</h3>
+						<span :class="statusSync.enabled ? 'ubr-badge-confirmed' : 'ubr-badge-unavailable'" x-text="statusSync.enabled ? 'Włączone' : 'Wyłączone'"></span>
+					</div>
+					<p class="text-[12px] text-ink-muted">Gdy zmienisz status zadania w ClickUp (np. na „Cold mail”), aplikacja w ciągu ok. 5 minut ustawi wybrany status firmy w Prospects i — jeśli wskażesz kampanię — przygotuje <strong>szkic</strong> sekwencji dla opiekuna firmy (nic się nie wysyła bez zatwierdzenia). Działa dla zadań utworzonych przez Ugly but Rich. Aplikacja nie zmienia statusów w ClickUp.</p>
+					<template x-if="statusSync.can_manage">
+						<div class="space-y-3 text-[13px]">
+							<label class="flex items-start gap-2"><input type="checkbox" class="mt-0.5" :checked="statusSync.connection?.is_mine" :disabled="busy || !statusSync.can_use_mine" @change="$event.target.checked && saveStatusSync({ use_my_connection: true })"> <span>Odczytuj statusy moim połączeniem ClickUp<span class="text-ink-muted" x-show="statusSync.connection && !statusSync.connection.is_mine" x-text="' (teraz: ' + (statusSync.connection?.user || '—') + ')'"></span></span></label>
+							<div class="space-y-2">
+								<template x-for="(r, i) in syncRules" :key="i">
+									<div class="grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto] items-center">
+										<div>
+											<input class="ubr-input" list="cu-statuses" x-model="r.clickup_status" placeholder="Status w ClickUp, np. cold mail" aria-label="Status w ClickUp">
+										</div>
+										<select class="ubr-input" x-model="r.pipeline_status" aria-label="Status w Prospects">
+											<option value="">— bez zmiany statusu —</option>
+											<template x-for="p in statusSync.pipeline_statuses" :key="p.key"><option :value="p.key" x-text="p.label"></option></template>
+										</select>
+										<select class="ubr-input" x-model="r.campaign_id" aria-label="Szkic sekwencji z kampanii">
+											<option value="">— bez szkicu sekwencji —</option>
+											<template x-for="c in statusSync.campaigns" :key="c.id"><option :value="String(c.id)" x-text="'Szkic: ' + c.name"></option></template>
+										</select>
+										<button type="button" class="ubr-btn-ghost ubr-btn-sm" @click="syncRules.splice(i, 1)" :disabled="busy">Usuń</button>
+									</div>
+								</template>
+								<datalist id="cu-statuses"><template x-for="s in statusSync.clickup_statuses" :key="s.name"><option :value="s.name"></option></template></datalist>
+								<p class="text-[12px] text-ink-muted" x-show="statusSync.clickup_statuses_error" x-text="'Nie udało się pobrać statusów listy: ' + statusSync.clickup_statuses_error"></p>
+							</div>
+							<div class="flex flex-wrap gap-2">
+								<button type="button" class="ubr-btn-ghost ubr-btn-sm" @click="addSyncRule()" :disabled="busy">@include('ubr.partials.icon', ['name' => 'plus', 'class' => 'size-3.5']) Dodaj regułę</button>
+								<button type="button" class="ubr-btn-primary ubr-btn-sm" @click="saveStatusSync()" :disabled="busy">Zapisz reguły</button>
+								<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="!statusSync.enabled" @click="saveStatusSync({ enabled: true })" :disabled="busy || !statusSync.connection">Włącz synchronizację</button>
+								<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="statusSync.enabled" @click="saveStatusSync({ enabled: false })" :disabled="busy">Wyłącz</button>
+								<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="statusSync.enabled" @click="runStatusSync()" :disabled="busy">Sprawdź teraz</button>
+							</div>
+						</div>
+					</template>
+					<p class="text-[12px] text-ink-muted" x-show="!statusSync.can_manage">Ustawienie zmienia właściciel lub administrator organizacji.</p>
+					<p class="text-[12px] text-ink-muted" x-show="statusSync.last_run_at" x-text="'Ostatnie sprawdzenie: ' + $store.ubr.date(statusSync.last_run_at) + ' · zmienione statusy: ' + statusSync.applied + ' · szkice sekwencji: ' + statusSync.drafts"></p>
+					<p class="text-[12px] text-danger" x-show="statusSync.last_error" x-text="statusSync.last_error"></p>
+				</div>
+			</template>
+
 			{{-- Automatic Export Rules (DISABLED BY DEFAULT) --}}
 			<template x-if="status.connected">
 				<div class="rounded-xl border border-line p-4 space-y-3">

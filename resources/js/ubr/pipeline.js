@@ -341,6 +341,8 @@ export function registerPipeline(Alpine) {
     fieldSuggestions: null,
     rules: { rules: [], can_manage: false, conditions: {} },
     ruleForm: null,
+    statusSync: null,
+    syncRules: [],
     preview: {},
     confirm: {},
     recent: [],
@@ -381,6 +383,7 @@ export function registerPipeline(Alpine) {
           const [rules, recent] = await Promise.all([api('/clickup/rules'), api('/clickup/exports/recent')]);
           this.rules = rules;
           this.recent = recent;
+          this.loadStatusSync();
         }
       } catch (e) {
         this.$store.ubr.error(e);
@@ -393,7 +396,7 @@ export function registerPipeline(Alpine) {
       this.busy = true;
       try {
         const r = await fn();
-        if (success) this.$store.ubr.toast(success);
+        if (success) this.$store.ubr.toast(typeof success === 'function' ? success(r) : success);
         return r;
       } catch (e) {
         this.$store.ubr.error(e);
@@ -516,6 +519,32 @@ export function registerPipeline(Alpine) {
         company_card_url: ['url', 'short_text', 'text'],
       }[key] || [];
       return (this.fields || []).filter((f) => types.includes(f.type));
+    },
+    /* --- Statusy ClickUp → Prospects (+ szkic sekwencji) --- */
+    async loadStatusSync() {
+      try {
+        this.statusSync = await api('/clickup/status-sync');
+        this.syncRules = (this.statusSync.rules || []).map((r) => ({ clickup_status: r.clickup_status, pipeline_status: r.pipeline_status || '', campaign_id: r.campaign_id ? String(r.campaign_id) : '' }));
+      } catch (e) {
+        this.statusSync = null;
+      }
+    },
+    addSyncRule() {
+      this.syncRules.push({ clickup_status: '', pipeline_status: 'mailing', campaign_id: '' });
+    },
+    async saveStatusSync(extra = {}) {
+      const rules = this.syncRules.filter((r) => r.clickup_status).map((r) => ({ ...r, campaign_id: r.campaign_id ? Number(r.campaign_id) : null }));
+      const r = await this.run(() => api('/clickup/status-sync', { method: 'POST', body: { rules, ...extra } }), 'Zapisano synchronizację statusów.');
+      if (r) {
+        this.statusSync = r;
+        this.syncRules = (r.rules || []).map((x) => ({ clickup_status: x.clickup_status, pipeline_status: x.pipeline_status || '', campaign_id: x.campaign_id ? String(x.campaign_id) : '' }));
+      } else {
+        this.loadStatusSync();
+      }
+    },
+    async runStatusSync() {
+      const r = await this.run(() => api('/clickup/status-sync/run', { method: 'POST' }), (x) => x.message);
+      if (r) setTimeout(() => this.loadStatusSync(), 8000);
     },
     async saveClaimSync(body) {
       const r = await this.run(() => api('/clickup/claim-sync', { method: 'POST', body }), 'Zapisano ustawienie zadań po przejęciu.');

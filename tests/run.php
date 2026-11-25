@@ -1512,6 +1512,7 @@ try {
 	/* PERFORMANCE & PROGRESSIVE DISCOVERY (Prompt 10.4) — cache stron, równoległe pobieranie, statusy, lekkie odświeżanie. */
 	require __DIR__ . '/performance-p104.php';
 	require __DIR__ . '/discover-claim-p1043.php';
+	require __DIR__ . '/clickup-status-sync.php';
 	require __DIR__ . '/sequences-p105.php';
 	require __DIR__ . '/login-app.php';
 

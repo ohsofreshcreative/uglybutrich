@@ -1078,3 +1078,19 @@ Własny ekran logowania w stylu aplikacji zamiast `wp-login.php`; po zalogowaniu
 - **Członkowie zespołu** (bez `edit_posts`, filtr `ubr/login/admin_capability`): kokpit WordPressa → aplikacja, pasek administracyjny ukryty; profil (`profile.php`), `admin-ajax`, `admin-post` działają. Administratorzy — bez zmian.
 - **Wylogowanie:** link w aplikacji → `/app/login/?loggedout=1` („Wylogowano”). Poprawka: `wp_logout_url()` zwraca adres zakodowany dla HTML, a Blade kodował go drugi raz (`&amp;amp;`) — ginął nonce i WordPress pokazywał ekran potwierdzenia.
 - **Wyłączenie:** `add_filter('ubr/login/enabled', '__return_false')` przywraca standardowe logowanie WordPressa.
+
+## 24. Statusy ClickUp → Prospects (+ szkic sekwencji) (25.11.2026)
+
+`ClickUpStatusSyncService`. Kierunek wyłącznie ClickUp → Ugly but Rich (aplikacja nigdy nie zmienia statusu zadania w ClickUp — brak pętli).
+
+- Konfiguracja organizacji: `settings.clickup_status_sync` = `{enabled, connection_id, rules[{clickup_status, pipeline_status, campaign_id}]}`;
+  zmienia owner / admin (`organization.update`) w Settings → ClickUp; status ClickUp normalizowany (małe litery, spacje).
+- Odczyt w tle co ~5 min (healthcheck → zadanie `clickup_status`, także `wp ubr queue-work --all`): `GET /list/{id}/task?date_updated_gt=`
+  dla list z eksportami organizacji; stan (kursory list, ostatni przebieg, błąd, liczniki) w opcji `ubr_cu_status_sync_{org}`.
+  Pierwsze sprawdzenie listy = punkt startowy (bez zmian wstecz). Lista 404/403 pomijana, błąd tokenu / limit kończy przebieg.
+- Zadanie ↔ firma tylko przez `ubr_clickup_exports.task_id`. Ostatni widziany status = zdarzenie `clickup_status` w historii prospektu;
+  reguła działa tylko przy ZMIANIE statusu (ręczna zmiana w aplikacji nie jest nadpisywana przy edycji zadania). Prospekt zarchiwizowany — pomijany.
+- Reguła: status pipeline (przez `PipelineService::update`, kontekst właściciela połączenia) + opcjonalnie SZKIC sekwencji z aktywnej kampanii
+  dla opiekuna firmy (odbiorca: pierwszy decydent z e-mailem bez blokad, inaczej ogólny e-mail firmy). Szkic tylko, gdy firma nie ma szkicu
+  ani trwającej sekwencji i nie ma zakazu kontaktu; wysyłka zawsze wymaga zatwierdzenia sekwencji.
+- Testy: `tests/clickup-status-sync.php` (mock ClickUp; tylko odczyt).

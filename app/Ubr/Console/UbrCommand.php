@@ -287,6 +287,7 @@ class UbrCommand
 			'analiza stron' => fn () => app(\App\Ubr\Services\WebsiteAnalysisRunner::class)->tick(false),
 			'decydenci' => fn () => app(\App\Ubr\Services\ContactResearchRunner::class)->tick(false),
 			'ClickUp' => fn () => app(\App\Ubr\Services\ClickUpRunner::class)->tick(false),
+			'statusy ClickUp' => fn () => app(\App\Ubr\Services\ClickUpStatusSyncService::class)->tick(),
 			'Lead Intelligence' => fn () => app(\App\Ubr\Services\LeadIntelligenceRunner::class)->tick(\App\Ubr\Services\LeadIntelligenceRunner::BATCH, false),
 			'telefony (Apollo)' => fn () => app(\App\Ubr\Services\ApolloPhoneRunner::class)->tick(false),
 			'wiek stron' => fn () => app(\App\Ubr\Services\WebsiteAgeRunner::class)->tick(20, false),

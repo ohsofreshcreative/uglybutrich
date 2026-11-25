@@ -109,6 +109,8 @@ class WorkerEndpoint
 				app(\App\Ubr\Services\WebsiteAgeRunner::class)->tick();
 			} elseif ($job === 'sequences') {
 				app(\App\Ubr\Services\Sequences\SequenceRunner::class)->tick();
+			} elseif ($job === 'clickup_status') {
+				app(\App\Ubr\Services\ClickUpStatusSyncService::class)->tick();
 			}
 		} catch (\Throwable $e) {
 			error_log('[ubr] Job worker "' . $job . '" failed: ' . $e->getMessage());

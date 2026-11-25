@@ -119,6 +119,12 @@ class ClickUpClient
 		return $this->request($token, 'GET', '/space/' . rawurlencode($spaceId) . '/list', null, ['archived' => 'false']);
 	}
 
+	/** Lista (m.in. `statuses`: status, type, color, orderindex). */
+	public function getList(string $token, string $listId, ?int $organizationId = null): array
+	{
+		return $this->request($token, 'GET', '/list/' . rawurlencode($listId), null, [], $organizationId);
+	}
+
 	public function listFields(string $token, string $listId): array
 	{
 		return $this->request($token, 'GET', '/list/' . rawurlencode($listId) . '/field');

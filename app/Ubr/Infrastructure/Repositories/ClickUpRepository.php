@@ -89,6 +89,22 @@ class ClickUpRepository
 		return $this->db->row("SELECT * FROM {$this->t(Tables::CLICKUP_EXPORTS)} WHERE organization_id = %d AND company_id = %d AND list_id = %s ORDER BY variant DESC LIMIT 1", $organizationId, $companyId, $listId);
 	}
 
+	/** Eksport (powiązanie firma ↔ zadanie) po identyfikatorze zadania ClickUp w organizacji. */
+	public function exportByTask(int $organizationId, string $taskId): ?array
+	{
+		return $this->db->row("SELECT * FROM {$this->t(Tables::CLICKUP_EXPORTS)} WHERE organization_id = %d AND task_id = %s ORDER BY id DESC LIMIT 1", $organizationId, $taskId);
+	}
+
+	/**
+	 * Listy ClickUp, na których organizacja ma zadania powiązane z firmami.
+	 *
+	 * @return list<string>
+	 */
+	public function exportLists(int $organizationId): array
+	{
+		return array_map('strval', $this->db->column("SELECT DISTINCT list_id FROM {$this->t(Tables::CLICKUP_EXPORTS)} WHERE organization_id = %d AND task_id IS NOT NULL AND task_id <> ''", $organizationId));
+	}
+
 	/**
 	 * @return list<array<string, mixed>>
 	 */

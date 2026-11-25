@@ -557,6 +557,7 @@ class PipelineService
 			'followup_cancelled' => 'Anulowano działanie',
 			'followup_open', 'followup_updated' => 'Zmieniono działanie',
 			'clickup_export' => 'Eksport do ClickUp: ' . ($e['new_value'] ?? ''),
+			'clickup_status' => 'Status w ClickUp: ' . ($e['old_value'] ?: '—') . ' → ' . ($e['new_value'] ?? ''),
 			default => $e['type'],
 		};
 

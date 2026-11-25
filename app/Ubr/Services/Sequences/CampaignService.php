@@ -293,6 +293,7 @@ class CampaignService
 			'window' => SendWindow::normalize((array) ($settings['window'] ?? [])),
 			'owner' => $owner ? ['id' => (int) $owner->ID, 'name' => $owner->display_name] : null,
 			'can_edit' => $c['scope'] === 'shared' ? $ctx->can('sequences.templates') : ((int) $c['owner_user_id'] === $ctx->userId || $ctx->can('sequences.team')),
+			'created_at' => gmdate('c', strtotime($c['created_at'] . ' UTC')),
 			'updated_at' => gmdate('c', strtotime($c['updated_at'] . ' UTC')),
 		];
 

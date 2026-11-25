@@ -115,6 +115,8 @@ class UbrServiceProvider extends ServiceProvider
 			$this->safely(fn () => $this->app->make(\App\Ubr\Services\ContactResearchRunner::class)->kick());
 			// Kolejka operacji ClickUp: wznowienie zaległych.
 			$this->safely(fn () => $this->app->make(\App\Ubr\Services\ClickUpRunner::class)->kick());
+			// Statusy zadań ClickUp → Prospects (co ~5 min, tylko organizacje z włączoną synchronizacją).
+			$this->safely(fn () => $this->app->make(\App\Ubr\Services\ClickUpStatusSyncService::class)->kick());
 			// Lead Intelligence: przeliczenie zaległych ocen.
 			$this->safely(fn () => $this->app->make(\App\Ubr\Services\LeadIntelligenceRunner::class)->kick());
 			// Odblokowane telefony (Apollo): odbiór wyników zatwierdzonych zleceń (bez nowych zapytań płatnych).

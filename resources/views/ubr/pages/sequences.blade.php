@@ -53,6 +53,7 @@
 								</div>
 								<p class="text-[12px] text-ink-muted line-clamp-2" x-text="c.description || 'Bez opisu'"></p>
 								<p class="text-[12px]"><span x-text="c.active_steps + ' wiadomości'"></span> · <span x-text="'ok. ' + c.total_days + ' dni'"></span> · <span x-text="c.scope_label"></span> · <span x-text="'v' + c.version"></span></p>
+								<p class="text-[11px] text-ink-muted" x-text="'Utworzona ' + $store.ubr.date(c.created_at) + (c.owner ? ' przez ' + c.owner.name : '') + (c.updated_at !== c.created_at ? ' · zmieniona ' + $store.ubr.date(c.updated_at) : '')"></p>
 								<p class="text-[11px] text-ink-muted" x-show="c.live_sequences" x-text="'W użyciu: ' + c.live_sequences + ' sekwencji (kopie — zmiana szablonu ich nie zmienia)'"></p>
 								<div class="flex flex-wrap gap-1.5 mt-auto pt-1">
 									<button type="button" class="ubr-btn-ghost ubr-btn-sm" @click="editCampaign(c)" x-text="c.can_edit ? 'Edytuj' : 'Podgląd'"></button>
