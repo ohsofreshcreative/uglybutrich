@@ -59,7 +59,7 @@ class PipelineService
 
 			$page = $this->pipeline->column($ctx->organizationId, $key, $filters, $only === $key ? $offset : 0, $limit);
 			$seqs = $this->sequenceCards($ctx, array_map(fn ($r) => (int) $r['id'], $page['items']));
-			$columns[] = ['key' => $key, 'label' => $def['label'], 'description' => $def['description'], 'closed' => $def['closed'], 'total' => $counts[$key] ?? 0, 'items' => array_map(fn ($r) => $this->card($r) + ['sequence' => $seqs[(int) $r['id']] ?? null], $page['items'])];
+			$columns[] = ['key' => $key, 'label' => $def['label'], 'description' => $def['description'], 'closed' => $def['closed'], 'total' => $counts[$key] ?? 0, 'items' => array_map(fn ($r) => $this->card($r) + ['sequence' => $seqs[(int) $r['id']] ?? null, 'can_sequence' => $ctx->can('sequences.manage') && ((int) $r['owner_user_id'] === $ctx->userId || $ctx->can('sequences.team'))], $page['items'])];
 		}
 
 		return ['columns' => $columns, 'members' => $this->memberOptions($ctx), 'priorities' => PipelineCatalog::PRIORITIES];

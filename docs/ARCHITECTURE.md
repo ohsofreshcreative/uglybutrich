@@ -1094,6 +1094,8 @@ Własny ekran logowania w stylu aplikacji zamiast `wp-login.php`; po zalogowaniu
   dla opiekuna firmy (odbiorca: pierwszy decydent z e-mailem bez blokad, inaczej ogólny e-mail firmy). Szkic tylko, gdy firma nie ma szkicu
   ani trwającej sekwencji i nie ma zakazu kontaktu; wysyłka zawsze wymaga zatwierdzenia sekwencji.
 - Kolumny Pipeline: `cold_call` (Cold Call, status przed kontaktem jak `to_contact`) i `mailing` (etykieta „Cold Mail”, klucz bez zmian).
-  Karta Pipeline pokazuje sekwencję firmy (`PipelineService::sequenceCards`, jedno zapytanie na kolumnę: kampania, odbiorca, stan,
-  wysłano X/Y, braki). „Wyślij…” otwiera zakładkę Mailing karty firmy (podgląd + potwierdzenie) — bez osobnej ścieżki wysyłki.
+- Widok `/app/pipeline` = lista leadów w statusie `mailing` (`/pipeline/board?status=mailing`) z sekwencją firmy
+  (`PipelineService::sequenceCards`: kampania, odbiorca, stan, wysłano X/Y, braki; `can_sequence` = opiekun albo `sequences.team`).
+  Grupy: bez sekwencji / szkic / w trakcie / zakończone. „Przypisz sekwencję” tworzy SZKIC (`POST /companies/{id}/sequences`);
+  „Zaplanuj / wyślij…” otwiera zakładkę Mailing karty firmy (podgląd + potwierdzenie) — bez osobnej ścieżki wysyłki.
 - Testy: `tests/clickup-status-sync.php` (mock ClickUp; tylko odczyt).

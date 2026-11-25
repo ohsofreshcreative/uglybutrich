@@ -191,40 +191,52 @@ export const salesStore = () => ({
  * ==================================================================================== */
 export function registerPipeline(Alpine) {
   /* -------------------------- Tablica (Board View) -------------------------- */
+  /* Pipeline = leady w statusie Mailing + ich sekwencje; przypisanie kampanii tworzy szkic, wysyłka tylko po podglądzie w karcie firmy. */
   Alpine.data('ubrPipeline', () => ({
-    filters: { search: '', owner: '', priority: '', qualification: '', overdue: '' },
-    columns: [],
+    status: 'mailing',
+    filters: { search: '', owner: '' },
+    items: [],
+    total: 0,
     members: [],
-    priorities: {},
     loading: true,
+    loadingMore: false,
     error: null,
-    dragging: null,
-    dragOver: null,
-    moving: {},
-    perColumn: 20,
+    tab: 'all',
+    tabs: [
+      { key: 'all', label: 'Wszystkie' },
+      { key: 'none', label: 'Bez sekwencji' },
+      { key: 'draft', label: 'Szkic — do wysłania' },
+      { key: 'running', label: 'W trakcie' },
+      { key: 'done', label: 'Zakończone' },
+    ],
+    campaigns: [],
+    mailboxes: [],
+    form: null,
+    busy: false,
+    perPage: 50,
 
-    get canManage() {
-      return can('pipeline.manage');
+    group(card) {
+      const s = card.sequence?.status;
+      if (!s) return 'none';
+      if (s === 'draft') return 'draft';
+      return ['completed', 'cancelled'].includes(s) ? 'done' : 'running';
     },
-    get hasFilters() {
-      return Object.values(this.filters).some(Boolean);
+    count(key) {
+      return key === 'all' ? this.total : this.items.filter((c) => this.group(c) === key).length;
     },
-    get statusOptions() {
-      return this.columns.map((c) => ({ key: c.key, label: c.label }));
+    get visible() {
+      return this.tab === 'all' ? this.items : this.items.filter((c) => this.group(c) === this.tab);
     },
     seqBadge(s) {
       return this.$store.ubr.stageBadge(SEQ_TONES[s.status] || 'muted');
     },
-    // Sekwencja (szkic, podgląd, zatwierdzenie i start) wyłącznie w zakładce Mailing karty firmy — bez kopii logiki wysyłki.
-    openMailing(card) {
-      this.$store.ubr.drawer.tab = 'mailing';
-      this.$store.ubr.openCompany(card.company_id);
+    optionKey(o) {
+      return o.source + ':' + (o.contact_id || o.email);
     },
-
     query(extra = {}) {
       const f = { ...this.filters };
       if (f.owner === 'me') f.owner = String(window.UBR.userId);
-      return { ...f, per_column: this.perColumn, ...extra };
+      return { ...f, status: this.status, per_column: this.perPage, ...extra };
     },
 
     init() {
@@ -239,83 +251,79 @@ export function registerPipeline(Alpine) {
       this.error = null;
       try {
         const data = await api('/pipeline/board', { query: this.query() });
-        this.columns = data.columns;
+        const col = data.columns[0] || { items: [], total: 0 };
+        this.items = col.items;
+        this.total = col.total;
         this.members = data.members;
-        this.priorities = data.priorities;
       } catch (e) {
         this.error = e.message;
       } finally {
         this.loading = false;
       }
     },
-
-    /** Doładowanie kolejnych kart kolumny (lazy load). */
-    async more(col) {
-      col.loadingMore = true;
+    async more() {
+      this.loadingMore = true;
       try {
-        const data = await api('/pipeline/board', { query: this.query({ status: col.key, offset: col.items.length }) });
-        const fresh = data.columns[0];
-        const known = new Set(col.items.map((i) => i.prospect_id));
-        col.items.push(...fresh.items.filter((i) => !known.has(i.prospect_id)));
-        col.total = fresh.total;
+        const data = await api('/pipeline/board', { query: this.query({ offset: this.items.length }) });
+        const col = data.columns[0];
+        const known = new Set(this.items.map((i) => i.prospect_id));
+        this.items.push(...col.items.filter((i) => !known.has(i.prospect_id)));
+        this.total = col.total;
       } catch (e) {
         this.$store.ubr.error(e);
       } finally {
-        col.loadingMore = false;
+        this.loadingMore = false;
       }
     },
 
-    dragStart(e, card) {
-      if (!this.canManage) return;
-      this.dragging = card;
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', String(card.prospect_id));
-    },
-    dragEnd() {
-      this.dragging = null;
-      this.dragOver = null;
-    },
-    drop(col) {
-      const card = this.dragging;
-      this.dragEnd();
-      if (card && card.status !== col.key) this.move(card, col.key);
+    // Podgląd, harmonogram, zatwierdzenie i start — wyłącznie w zakładce Mailing karty firmy (bez kopii logiki wysyłki).
+    openMailing(card) {
+      this.$store.ubr.drawer.tab = 'mailing';
+      this.$store.ubr.openCompany(card.company_id);
     },
 
-    /** Zmiana statusu (drag & drop albo lista „Przenieś do” z klawiatury) — zapis w backendzie, przy błędzie cofnięcie. */
-    async move(card, status) {
-      const from = this.columns.find((c) => c.key === card.status);
-      const to = this.columns.find((c) => c.key === status);
-      if (!from || !to || from === to || this.moving[card.prospect_id]) return;
-      const index = from.items.indexOf(card);
-      this.moving[card.prospect_id] = true;
-      from.items.splice(index, 1);
-      from.total--;
-      card.status = status;
-      to.items.unshift(card);
-      to.total++;
+    async startAssign(card) {
+      this.form = { prospect_id: card.prospect_id, campaign_id: '', recipient_key: 'manual', manual_email: '', mailbox_id: '', options: [], loading: true };
       try {
-        await api(`/prospects/${card.prospect_id}`, { method: 'POST', body: { status } });
-        this.$store.ubr.toast(`„${card.name}” → ${to.label}.` + (['lost', 'not_a_fit'].includes(status) ? ' Możesz dodać powód w karcie firmy (zakładka Sprzedaż).' : ''));
+        const [c, m, r] = await Promise.all([
+          this.campaigns.length ? null : api('/sequences/campaigns', { query: { status: 'active' } }),
+          this.mailboxes.length ? null : api('/sequences/mailboxes'),
+          api(`/companies/${card.company_id}/sequence-recipients`),
+        ]);
+        if (c) this.campaigns = c.items;
+        if (m) this.mailboxes = m.items;
+        if (this.form?.prospect_id !== card.prospect_id) return;
+        const free = r.options.filter((o) => !o.blockers.length && !o.conflict);
+        const first = free.find((o) => o.source === 'contact') || free[0];
+        Object.assign(this.form, {
+          options: r.options,
+          recipient_key: first ? this.optionKey(first) : 'manual',
+          campaign_id: this.campaigns.length === 1 ? String(this.campaigns[0].id) : '',
+          mailbox_id: String((this.mailboxes.find((x) => x.is_default) || this.mailboxes[0])?.id || ''),
+          loading: false,
+        });
       } catch (e) {
-        to.items.splice(to.items.indexOf(card), 1);
-        to.total--;
-        card.status = from.key;
-        from.items.splice(index, 0, card);
-        from.total++;
+        this.$store.ubr.error(e);
+        this.form = null;
+      }
+    },
+    async createDraft(card) {
+      const f = this.form;
+      if (!f.campaign_id) return this.$store.ubr.toast('Wybierz kampanię.', 'error');
+      const opt = f.options.find((o) => this.optionKey(o) === f.recipient_key);
+      const recipient = f.recipient_key === 'manual' ? { source: 'manual', email: f.manual_email.trim() } : opt && { source: opt.source, email: opt.email, contact_id: opt.contact_id };
+      if (!recipient || !recipient.email) return this.$store.ubr.toast('Wybierz lub wpisz adres odbiorcy.', 'error');
+      if (!f.mailbox_id) return this.$store.ubr.toast('Podłącz własną skrzynkę w Sequences → Mailboxes.', 'error');
+      this.busy = true;
+      try {
+        await api(`/companies/${card.company_id}/sequences`, { method: 'POST', body: { campaign_id: Number(f.campaign_id), recipient, mailbox_id: Number(f.mailbox_id) } });
+        this.form = null;
+        this.$store.ubr.toast('Utworzono szkic sekwencji. Nic nie zostało wysłane — kliknij „Zaplanuj / wyślij…”, żeby sprawdzić treść i uruchomić.');
+        await this.load(true);
+      } catch (e) {
         this.$store.ubr.error(e);
       } finally {
-        delete this.moving[card.prospect_id];
-      }
-    },
-
-    async assign(card, ownerId) {
-      try {
-        await api(`/prospects/${card.prospect_id}`, { method: 'POST', body: { owner_user_id: ownerId ? Number(ownerId) : null } });
-        card.owner = this.members.find((m) => String(m.id) === String(ownerId)) || null;
-        this.$store.ubr.toast(card.owner ? `Przypisano: ${card.owner.name}.` : 'Usunięto właściciela.');
-      } catch (e) {
-        this.$store.ubr.error(e);
-        this.load(true);
+        this.busy = false;
       }
     },
   }));

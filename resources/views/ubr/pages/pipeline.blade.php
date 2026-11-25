@@ -5,119 +5,123 @@
 @endsection
 
 @section('content')
+	{{-- Pipeline = leady w statusie Mailing i ich sekwencje. Wysyłka wyłącznie po podglądzie i potwierdzeniu w zakładce Mailing karty firmy. --}}
 	<div x-data="ubrPipeline" class="space-y-4">
-		{{-- Filtry --}}
 		<div class="ubr-card p-4 flex flex-wrap items-end gap-3">
 			<div class="flex-1 min-w-[200px]">
-				<label class="ubr-label" for="b-search">Szukaj</label>
-				<input id="b-search" class="ubr-input" type="search" placeholder="Nazwa, domena, miasto…" x-model="filters.search" @input.debounce.350ms="load()">
+				<label class="ubr-label" for="m-search">Szukaj</label>
+				<input id="m-search" class="ubr-input" type="search" placeholder="Nazwa, domena, miasto…" x-model="filters.search" @input.debounce.350ms="load()">
 			</div>
 			<div class="w-[170px]">
-				<label class="ubr-label" for="b-owner">Właściciel</label>
-				<select id="b-owner" class="ubr-input" x-model="filters.owner" @change="load()">
-					<option value="">Wszyscy</option><option value="me">Moje</option><option value="none">Bez właściciela</option>
+				<label class="ubr-label" for="m-owner">Opiekun</label>
+				<select id="m-owner" class="ubr-input" x-model="filters.owner" @change="load()">
+					<option value="">Wszyscy</option><option value="me">Moje</option><option value="none">Bez opiekuna</option>
 					<template x-for="m in members" :key="m.id"><option :value="String(m.id)" x-text="m.name"></option></template>
 				</select>
 			</div>
-			<div class="w-[140px]">
-				<label class="ubr-label" for="b-prio">Priorytet</label>
-				<select id="b-prio" class="ubr-input" x-model="filters.priority" @change="load()">
-					<option value="">Dowolny</option>
-					<template x-for="(label, key) in priorities" :key="key"><option :value="key" x-text="label"></option></template>
-				</select>
-			</div>
-			<div class="w-[180px]">
-				<label class="ubr-label" for="b-qual">Kwalifikacja</label>
-				<select id="b-qual" class="ubr-input" x-model="filters.qualification" @change="load()">
-					<option value="">Dowolna</option><option value="good_candidate">Dobry kandydat</option><option value="needs_review">Wymaga weryfikacji</option><option value="low_potential">Niski potencjał</option><option value="not_a_fit">Nie pasuje</option><option value="none">Bez decyzji</option>
-				</select>
-			</div>
-			<div class="w-[170px]">
-				<label class="ubr-label" for="b-due">Następne działanie</label>
-				<select id="b-due" class="ubr-input" x-model="filters.overdue" @change="load()">
-					<option value="">Dowolnie</option><option value="yes">Zaległe</option><option value="planned">Zaplanowane</option><option value="none">Brak</option>
-				</select>
-			</div>
-			<button type="button" class="ubr-btn-ghost" x-show="hasFilters" @click="filters = { search: '', owner: '', priority: '', qualification: '', overdue: '' }; load()">Wyczyść</button>
+			<button type="button" class="ubr-btn-ghost" x-show="filters.search || filters.owner" @click="filters = { search: '', owner: '' }; load()">Wyczyść</button>
+		</div>
+
+		<div class="flex flex-wrap gap-2" role="tablist" aria-label="Stan sekwencji">
+			<template x-for="t in tabs" :key="t.key">
+				<button type="button" role="tab" class="ubr-btn-ghost ubr-btn-sm" :class="tab === t.key ? '!bg-ink !text-white' : ''" :aria-selected="tab === t.key" @click="tab = t.key">
+					<span x-text="t.label"></span> <span class="tabular-nums opacity-70" x-text="count(t.key)"></span>
+				</button>
+			</template>
 		</div>
 
 		<template x-if="error"><div class="ubr-card p-4 text-danger font-semibold" x-text="error"></div></template>
 
-		<p class="text-[12px] text-ink-muted" x-show="canManage">Przeciągnij kartę do innej kolumny albo użyj listy „Przenieś do” (klawiatura). Status jest prywatny dla Twojej organizacji.</p>
-
-		{{-- Tablica: kolumny = statusy --}}
-		<div class="overflow-x-auto pb-3 -mx-4 px-4 sm:mx-0 sm:px-0">
-			<div class="flex gap-3 min-w-max items-start" :class="loading ? 'opacity-60' : ''">
-				<template x-if="loading && columns.length === 0">
-					<div class="flex gap-3"><div class="ubr-skeleton h-64 w-[280px]"></div><div class="ubr-skeleton h-64 w-[280px]"></div><div class="ubr-skeleton h-64 w-[280px]"></div></div>
-				</template>
-
-				<template x-for="col in columns" :key="col.key">
-					<section class="w-[280px] shrink-0 rounded-2xl bg-canvas border border-line flex flex-col max-h-[calc(100vh-260px)] min-h-[160px]"
-						:class="dragOver === col.key ? 'ring-2 ring-gold' : ''" :aria-label="'Kolumna ' + col.label"
-						@dragover.prevent="dragOver = col.key" @dragleave="dragOver === col.key && (dragOver = null)" @drop.prevent="drop(col)">
-						<header class="px-3 pt-3 pb-2 flex items-center gap-2">
-							<h2 class="font-extrabold text-[13px] flex-1" x-text="col.label" :title="col.description"></h2>
-							<span class="text-[12px] font-bold tabular-nums text-ink-muted" x-text="col.total"></span>
-						</header>
-						<div class="px-2 pb-2 space-y-2 overflow-y-auto flex-1">
-							<template x-if="col.items.length === 0"><p class="text-[12px] text-ink-muted text-center py-6">Brak firm</p></template>
-							<template x-for="card in col.items" :key="card.prospect_id">
-								<article class="rounded-xl bg-white border border-line p-3 shadow-sm" :draggable="canManage" @dragstart="dragStart($event, card)" @dragend="dragEnd()"
-									:class="[moving[card.prospect_id] ? 'opacity-50' : '', canManage ? 'cursor-grab active:cursor-grabbing' : '']">
-									<div class="flex items-start gap-2">
-										<button type="button" class="font-bold text-[13px] text-left leading-snug hover:underline flex-1 min-w-0" @click="$store.ubr.drawer.tab = 'sales'; $store.ubr.openCompany(card.company_id)" x-text="card.name"></button>
-										<span :class="$store.ubr.priorityBadge(card.priority)" x-text="card.priority_label"></span>
-									</div>
-									<div class="text-[11px] text-ink-muted truncate" x-text="card.domain || 'brak domeny'"></div>
-									<div class="flex items-center gap-1.5 mt-2">
-										<span :class="$store.ubr.opportunityClass(card.opportunity)" x-text="card.opportunity ?? '—'" title="Opportunity Score"></span>
-										<span :class="$store.ubr.relevanceClass(card.relevance)" x-text="card.relevance ?? '—'" title="Relevance Score"></span>
-										<span :class="$store.ubr.contactScoreClass(card.top_contact?.score)" x-text="card.top_contact?.score ?? '—'" title="Contact Priority Score (Top 1)"></span>
-									</div>
-									<template x-if="card.top_contact">
-										<div class="mt-1.5 text-[12px] leading-snug"><span class="font-semibold" x-text="card.top_contact.name"></span> <span class="text-ink-muted" x-text="card.top_contact.title ? '· ' + card.top_contact.title : ''"></span></div>
-									</template>
-									<div class="mt-2 flex items-center gap-1.5 text-[11px]" x-show="card.next_action_at">
-										@include('ubr.partials.icon', ['name' => 'clock', 'class' => 'size-3.5'])
-										<span :class="card.overdue ? 'text-danger font-bold' : 'text-ink-soft'" x-text="(card.overdue ? 'Zaległe: ' : '') + $store.ubr.date(card.next_action_at)"></span>
-									</div>
-									<template x-if="card.sequence">
-										<div class="mt-2 rounded-lg border border-line bg-canvas px-2 py-1.5 text-[11px] leading-snug">
-											<div class="flex items-center gap-1.5">
-												<span class="font-semibold truncate flex-1 min-w-0" x-text="card.sequence.campaign" :title="'Kampania: ' + card.sequence.campaign"></span>
-												<span :class="seqBadge(card.sequence)" x-text="card.sequence.status_label"></span>
-											</div>
-											<div class="text-ink-muted truncate" x-text="(card.sequence.recipient ? 'Do: ' + card.sequence.recipient : 'Brak odbiorcy') + (card.sequence.status === 'draft' ? '' : ' · wysłano ' + card.sequence.sent + '/' + card.sequence.steps) + (card.sequence.test_mode ? ' · tryb testowy' : '')"></div>
-											<div class="text-ink-muted" x-show="card.sequence.next_send_at && ['scheduled', 'active'].includes(card.sequence.status)" x-text="'Następna: ' + $store.ubr.date(card.sequence.next_send_at)"></div>
-											<div class="text-danger font-semibold" x-show="card.sequence.missing.length" x-text="'Brakuje: ' + card.sequence.missing.join(', ')"></div>
-											<button type="button" class="ubr-btn-primary ubr-btn-sm w-full mt-1.5" x-show="card.sequence.status === 'draft' && card.sequence.can_manage" @click="openMailing(card)">Wyślij…</button>
-											<button type="button" class="ubr-btn-ghost ubr-btn-sm w-full mt-1.5" x-show="card.sequence.status !== 'draft' || !card.sequence.can_manage" @click="openMailing(card)">Podgląd sekwencji</button>
+		<div class="ubr-card overflow-hidden" :class="loading ? 'opacity-60' : ''">
+			<table class="ubr-table table-fixed w-full">
+				<colgroup><col class="w-[26%]"><col class="w-[12%]"><col class="w-[34%]"><col class="w-[12%]"><col class="w-[16%]"></colgroup>
+				<thead><tr><th>Firma</th><th>Opiekun</th><th>Sekwencja</th><th>Postęp</th><th class="text-right">Akcje</th></tr></thead>
+				<tbody>
+					<template x-if="loading && !items.length"><tr><td colspan="5"><div class="ubr-skeleton h-10"></div></td></tr></template>
+					<template x-if="!loading && !visible.length">
+						<tr><td colspan="5" class="text-center text-ink-muted py-8" x-text="items.length ? 'Brak leadów w tej grupie.' : 'Brak leadów w Mailing. Trafiają tu po zmianie statusu w ClickUp (np. „Cold mail”) albo po przeniesieniu w karcie firmy.'"></td></tr>
+					</template>
+					<template x-for="card in visible" :key="card.prospect_id">
+						<tr :data-row-prospect="card.prospect_id">
+							<td>
+								<button type="button" class="font-semibold text-left hover:underline break-words" @click="$store.ubr.drawer.tab = 'company'; $store.ubr.openCompany(card.company_id)" x-text="card.name"></button>
+								<div class="text-[12px] text-ink-muted truncate" x-text="card.domain || 'brak domeny'"></div>
+							</td>
+							<td class="truncate" x-text="card.owner ? card.owner.name : '—'"></td>
+							<td>
+								<template x-if="card.sequence">
+									<div class="space-y-0.5">
+										<div class="flex items-center gap-1.5 min-w-0">
+											<span class="font-semibold truncate" x-text="card.sequence.campaign" :title="card.sequence.campaign"></span>
+											<span :class="seqBadge(card.sequence)" x-text="card.sequence.status_label"></span>
+											<span class="ubr-badge-uncertain" x-show="card.sequence.test_mode">test</span>
 										</div>
-									</template>
-									<template x-if="!card.sequence && card.status === 'mailing'">
-										<button type="button" class="ubr-btn-ghost ubr-btn-sm w-full mt-2" @click="openMailing(card)">Przypisz kampanię…</button>
-									</template>
-									<div class="mt-2 grid grid-cols-2 gap-1.5" x-show="canManage">
-										<label class="sr-only" :for="'mv-' + card.prospect_id">Przenieś do</label>
-										<select :id="'mv-' + card.prospect_id" class="ubr-input h-7 text-[11px] px-1.5" @change="move(card, $event.target.value); $event.target.value = ''" :disabled="!!moving[card.prospect_id]">
-											<option value="">Przenieś do…</option>
-											<template x-for="s in statusOptions.filter(s => s.key !== card.status)" :key="s.key"><option :value="s.key" x-text="s.label"></option></template>
-										</select>
-										<label class="sr-only" :for="'ow-' + card.prospect_id">Właściciel</label>
-										<select :id="'ow-' + card.prospect_id" class="ubr-input h-7 text-[11px] px-1.5" :value="card.owner ? String(card.owner.id) : ''" @change="assign(card, $event.target.value)">
-											<option value="">Bez właściciela</option>
-											<template x-for="m in members" :key="m.id"><option :value="String(m.id)" x-text="m.name" :selected="card.owner && card.owner.id === m.id"></option></template>
-										</select>
+										<div class="text-[12px] text-ink-muted font-mono break-all" x-text="card.sequence.recipient || 'brak odbiorcy'"></div>
+										<div class="text-[12px] text-danger font-semibold" x-show="card.sequence.missing.length" x-text="'Brakuje: ' + card.sequence.missing.join(', ')"></div>
 									</div>
-									<div class="mt-1.5 text-[11px] text-ink-muted" x-show="!canManage" x-text="card.owner ? 'Właściciel: ' + card.owner.name : 'Bez właściciela'"></div>
-								</article>
-							</template>
-							<button type="button" class="ubr-btn-ghost ubr-btn-sm w-full" x-show="col.items.length < col.total" @click="more(col)" :disabled="!!col.loadingMore" x-text="col.loadingMore ? 'Ładowanie…' : 'Pokaż więcej (' + (col.total - col.items.length) + ')'"></button>
-						</div>
-					</section>
-				</template>
-			</div>
+								</template>
+								<template x-if="!card.sequence && form?.prospect_id !== card.prospect_id">
+									<span class="text-ink-muted">Brak sekwencji</span>
+								</template>
+
+								{{-- Przypisanie kampanii: tworzy SZKIC (nic nie wysyła) --}}
+								<template x-if="form && form.prospect_id === card.prospect_id">
+									<div class="space-y-2">
+										<div>
+											<label class="ubr-label" :for="'m-camp-' + card.prospect_id">Kampania</label>
+											<select :id="'m-camp-' + card.prospect_id" class="ubr-input h-9" x-model="form.campaign_id">
+												<option value="">Wybierz kampanię…</option>
+												<template x-for="c in campaigns" :key="c.id"><option :value="String(c.id)" x-text="c.name"></option></template>
+											</select>
+										</div>
+										<div>
+											<label class="ubr-label" :for="'m-rcp-' + card.prospect_id">Odbiorca</label>
+											<select :id="'m-rcp-' + card.prospect_id" class="ubr-input h-9" x-model="form.recipient_key" :disabled="form.loading">
+												<template x-for="o in form.options" :key="optionKey(o)">
+													<option :value="optionKey(o)" :disabled="o.blockers.length > 0" x-text="o.email + (o.name ? ' — ' + o.name : ' — ' + o.source_label) + (o.blockers.length ? ' (zablokowany: ' + o.blockers[0].message + ')' : '')"></option>
+												</template>
+												<option value="manual">Inny adres…</option>
+											</select>
+											<input type="email" class="ubr-input h-9 mt-1.5" x-show="form.recipient_key === 'manual'" x-model="form.manual_email" placeholder="adres służbowy odbiorcy" aria-label="Adres odbiorcy wpisany ręcznie">
+										</div>
+										<div x-show="mailboxes.length > 1">
+											<label class="ubr-label" :for="'m-mb-' + card.prospect_id">Skrzynka</label>
+											<select :id="'m-mb-' + card.prospect_id" class="ubr-input h-9" x-model="form.mailbox_id">
+												<template x-for="m in mailboxes" :key="m.id"><option :value="String(m.id)" x-text="m.email"></option></template>
+											</select>
+										</div>
+										<p class="text-[12px] text-danger font-semibold" x-show="!mailboxes.length">Nie masz podłączonej skrzynki — dodaj ją w Sequences → Mailboxes.</p>
+										<div class="flex flex-wrap gap-2">
+											<button type="button" class="ubr-btn-primary ubr-btn-sm" @click="createDraft(card)" :disabled="busy || form.loading">Utwórz szkic</button>
+											<button type="button" class="ubr-btn-ghost ubr-btn-sm" @click="form = null" :disabled="busy">Anuluj</button>
+										</div>
+									</div>
+								</template>
+							</td>
+							<td class="text-[12px]">
+								<template x-if="card.sequence && card.sequence.status !== 'draft'">
+									<div>
+										<div class="tabular-nums" x-text="'Wysłano ' + card.sequence.sent + '/' + card.sequence.steps"></div>
+										<div class="text-ink-muted" x-show="card.sequence.next_send_at && ['scheduled', 'active'].includes(card.sequence.status)" x-text="'Następna: ' + $store.ubr.date(card.sequence.next_send_at)"></div>
+									</div>
+								</template>
+								<span class="text-ink-muted" x-show="!card.sequence || card.sequence.status === 'draft'">—</span>
+							</td>
+							<td class="text-right">
+								<div class="flex flex-col items-end gap-1.5">
+									<button type="button" class="ubr-btn-primary ubr-btn-sm" x-show="!card.sequence && card.can_sequence && form?.prospect_id !== card.prospect_id" @click="startAssign(card)">Przypisz sekwencję</button>
+									<button type="button" class="ubr-btn-primary ubr-btn-sm" x-show="card.sequence?.status === 'draft' && card.sequence.can_manage" @click="openMailing(card)">Zaplanuj / wyślij…</button>
+									<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="card.sequence && (card.sequence.status !== 'draft' || !card.sequence.can_manage)" @click="openMailing(card)">Podgląd</button>
+									<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="card.sequence && ['completed', 'cancelled'].includes(card.sequence.status) && card.can_sequence" @click="openMailing(card)">Nowa sekwencja…</button>
+									<span class="text-[12px] text-ink-muted" x-show="!card.sequence && !card.can_sequence">Prowadzi opiekun</span>
+								</div>
+							</td>
+						</tr>
+					</template>
+				</tbody>
+			</table>
 		</div>
+
+		<button type="button" class="ubr-btn-ghost ubr-btn-sm w-full" x-show="items.length < total" @click="more()" :disabled="loadingMore" x-text="loadingMore ? 'Ładowanie…' : 'Pokaż więcej (' + (total - items.length) + ')'"></button>
 	</div>
 @endsection

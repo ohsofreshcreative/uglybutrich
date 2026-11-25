@@ -125,7 +125,8 @@ $boardCard = function (int $user, string $status, int $companyId) {
 };
 $card = $boardCard($uF1, 'mailing', $cS);
 UbrT::ok($card && ($card['sequence']['campaign'] ?? '') === 'Cold mail ubrtest' && $card['sequence']['status'] === 'draft' && $card['sequence']['recipient'] === 'biuro@cus-sync.ubrtest.pl' && $card['sequence']['can_manage'] === true, 'CUS-12. Pipeline: karta Cold Mail pokazuje kampanię, odbiorcę i szkic (do wysłania przez opiekuna)');
-UbrT::ok(($boardCard($uF2, 'mailing', $cS)['sequence']['can_manage'] ?? null) === false, 'CUS-12. inny pracownik widzi sekwencję, ale nie może jej wysłać');
+$cardF2 = $boardCard($uF2, 'mailing', $cS);
+UbrT::ok(($cardF2['sequence']['can_manage'] ?? null) === false && $cardF2['can_sequence'] === false && $card['can_sequence'] === true, 'CUS-12. inny pracownik widzi sekwencję, ale nie może jej wysłać ani przypisać nowej');
 
 // Reguła „Cold call” → kolumna Cold Call (bez kampanii, bez szkicu).
 $db->insert(Tables::CLICKUP_EXPORTS, ['organization_id' => $orgF, 'company_id' => $cS2, 'user_id' => $uF1, 'connection_id' => $connF1, 'workspace_id' => '901', 'list_id' => 'LS1', 'task_id' => 'cus2', 'export_status' => 'success', 'created_at' => $now, 'updated_at' => $now]);
