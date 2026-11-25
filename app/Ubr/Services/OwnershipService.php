@@ -47,7 +47,7 @@ class OwnershipService
 		$table = $this->db->table(Tables::PROSPECTS);
 		$existing = $this->db->row("SELECT id, owner_user_id, archived_at, do_not_contact FROM {$table} WHERE organization_id = %d AND company_id = %d", $ctx->organizationId, $companyId);
 
-		if ($existing && ! $existing['archived_at'] && (int) $existing['do_not_contact'] === 1) {
+		if ($existing && (int) $existing['do_not_contact'] === 1) { // także zarchiwizowany prospekt — archiwizacja nie zdejmuje zakazu
 			throw new UbrException('Firma ma zakaz kontaktu — nie można jej przejąć do kontaktu.', 'ubr_do_not_contact', 409);
 		}
 

@@ -500,6 +500,7 @@ file_put_contents($modeFile, 'ok');
 $proc = proc_open(['python3', __DIR__ . '/tools/fake_smtp.py', (string) $port, $modeFile, $outFile], [['pipe', 'r'], ['file', '/dev/null', 'w'], ['file', '/dev/null', 'w']], $pipes);
 usleep(400000);
 add_filter('ubr/mail/smtp_timeouts', fn () => [3, 2]);
+add_filter('ubr/mail/allow_private_smtp', '__return_true'); // lokalny serwer testowy na 127.0.0.1 (produkcja: tylko publiczne IP)
 $smtpBox = ['provider' => 'smtp', 'email' => 'anna@sender.ubrtest.pl', 'host' => '127.0.0.1', 'port' => $port, 'encryption' => 'none', 'username' => 'anna@sender.ubrtest.pl'];
 $msg = fn (string $to = 'odbiorca@beta.p105.ubrtest.pl') => new OutgoingMessage('anna@sender.ubrtest.pl', 'Anna Testowa', $to, 'Jan Nowak', 'Temat ąę — test', "Treść ąę\n.linia z kropką\nKoniec", '<ubr.1.abc@sender.ubrtest.pl>', ['List-Unsubscribe' => '<https://example.test/u>']);
 $smtp = new SmtpTransport();

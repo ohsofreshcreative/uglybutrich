@@ -58,6 +58,7 @@ class SequenceAdminService
 				'append_unsubscribe' => (bool) $s['append_unsubscribe'],
 				'unsubscribe_text' => $s['unsubscribe_text'],
 				'enabled_at' => $s['enabled_at'],
+				'backlog' => $this->backlog($ctx->organizationId),
 			],
 			'checklist' => $this->checklist($ctx),
 			'kill_switch' => SequenceSettings::killSwitchOff(),
@@ -115,6 +116,12 @@ class SequenceAdminService
 					throw new UbrException('Nie można włączyć wysyłki — brakuje: ' . implode('; ', array_map(fn ($c) => $c['label'], $missing)) . '.', 'ubr_sequences_checklist', 422);
 				}
 
+				$backlog = $this->backlog($ctx->organizationId);
+
+				if ($backlog > 0 && empty($input['confirm_backlog'])) {
+					throw new UbrException('Czeka ' . $backlog . ' zaległych wiadomości, które wyjdą od razu po włączeniu — sprawdź je w zakładce Scheduled i potwierdź włączenie.', 'ubr_sequences_backlog', 409);
+				}
+
 				$changes = ['sending_enabled' => true, 'enabled_by' => $ctx->userId, 'enabled_at' => Db::now()];
 			} else {
 				$changes['sending_enabled'] = false;
@@ -124,6 +131,17 @@ class SequenceAdminService
 		$this->settings->save($ctx->organizationId, $changes);
 
 		return $this->get($ctx);
+	}
+
+	/** Zaległe (termin minął) wiadomości prawdziwych sekwencji — wyjdą zaraz po włączeniu wysyłki. */
+	private function backlog(int $organizationId): int
+	{
+		return (int) $this->db->value(
+			"SELECT COUNT(*) FROM {$this->db->table(Tables::SEQ_MESSAGES)} m JOIN {$this->db->table(Tables::SEQ_SEQUENCES)} s ON s.id = m.sequence_id
+			WHERE s.organization_id = %d AND s.test_mode = 0 AND s.status IN ('scheduled','active') AND m.status = 'scheduled' AND m.scheduled_at <= %s",
+			$organizationId,
+			Db::now()
+		);
 	}
 
 	/**

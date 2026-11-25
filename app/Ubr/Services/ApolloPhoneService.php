@@ -432,7 +432,7 @@ class ApolloPhoneService
 	{
 		$db = app(Db::class);
 
-		return (bool) $db->value("SELECT 1 FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::PROSPECTS)} WHERE organization_id = %d AND company_id = %d AND do_not_contact = 1 AND archived_at IS NULL LIMIT 1", $organizationId, $companyId);
+		return (bool) $db->value("SELECT 1 FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::PROSPECTS)} WHERE organization_id = %d AND company_id = %d AND do_not_contact = 1 LIMIT 1", $organizationId, $companyId);
 	}
 
 	/**

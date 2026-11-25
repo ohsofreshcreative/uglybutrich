@@ -157,7 +157,7 @@ class ContactResearchService
 	{
 		$db = app(\App\Ubr\Infrastructure\Database\Db::class);
 		$p = $db->row("SELECT do_not_contact, status, qualification, archived_at FROM {$db->table(\App\Ubr\Infrastructure\Database\Tables::PROSPECTS)} WHERE organization_id = %d AND company_id = %d", $organizationId, (int) $company['id']);
-		$dnc = $p && ! $p['archived_at'] && ((int) $p['do_not_contact'] === 1 || $p['status'] === 'not_a_fit' || $p['qualification'] === 'not_a_fit');
+		$dnc = $p && ((int) $p['do_not_contact'] === 1 || $p['status'] === 'not_a_fit' || $p['qualification'] === 'not_a_fit');
 
 		if ($dnc || in_array((string) ($company['verification_status'] ?? ''), ['inactive', 'suspended'], true)) {
 			return ['code' => 'blocked', 'message' => $dnc ? 'Firma ma zakaz kontaktu lub oznaczenie „nie pasuje” — bez analizy kontaktów.' : 'Firma nieaktywna lub zawieszona w rejestrze — bez analizy kontaktów.'];

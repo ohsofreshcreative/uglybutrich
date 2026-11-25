@@ -637,7 +637,7 @@ try {
 	UbrT::ok($first->website === 'http://www.stalmontaz.ubrtest.pl' && $first->employeesMin === 120 && $first->employeesConfidence === 'declared', 'domena i zatrudnienie (szacunek Apollo = deklaracja dostawcy)');
 	UbrT::eq('mazowieckie', $first->region, 'województwo z pola state ("Masovian Voivodeship")');
 	UbrT::ok($first->foundedYear === 1994 && $first->revenueEstimate === 12000000, 'rok założenia i przychody');
-	UbrT::eq(['page' => 2], $page1->nextCursor, 'paginacja: następna strona');
+	UbrT::eq(['page' => 2, 'start' => 1], $page1->nextCursor, 'paginacja: następna strona (start = pierwsza strona tego wyszukiwania)');
 	$page1again = $apolloProvider->fetch($critA, ['_organization_id' => $orgA]);
 	UbrT::ok($GLOBALS['ubrt_apollo_calls'] === 1 && ! empty($page1again->meta['cached']), 'identyczne zapytanie → cache (bez kosztu, bez HTTP)');
 

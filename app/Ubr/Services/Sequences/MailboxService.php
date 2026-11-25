@@ -271,7 +271,7 @@ class MailboxService
 			'last_tested_at' => $m['last_tested_at'] ? gmdate('c', strtotime($m['last_tested_at'] . ' UTC')) : null,
 			'last_error' => $m['last_error'],
 			'last_sent_at' => $m['last_sent_at'] ? gmdate('c', strtotime($m['last_sent_at'] . ' UTC')) : null,
-			'sent_today' => (int) $this->db->value("SELECT COUNT(*) FROM {$this->db->table(Tables::SEQ_MESSAGES)} WHERE mailbox_id = %d AND status IN ('sent','sending','unknown_result') AND transport <> 'test' AND sent_at >= %s", (int) $m['id'], gmdate('Y-m-d H:i:s', time() - DAY_IN_SECONDS)),
+			'sent_today' => (int) $this->db->value("SELECT COUNT(*) FROM {$this->db->table(Tables::SEQ_MESSAGES)} WHERE mailbox_id = %d AND status IN ('sent','sending','unknown_result') AND transport <> 'test' AND COALESCE(sent_at, updated_at) >= %s", (int) $m['id'], gmdate('Y-m-d H:i:s', time() - DAY_IN_SECONDS)),
 		];
 	}
 
@@ -317,6 +317,12 @@ class MailboxService
 		}
 
 		return $name;
+	}
+
+	/** Pracownik usunięty z organizacji: skrzynki wyłączone, zaszyfrowane hasła usunięte. */
+	public function disableForMember(int $organizationId, int $userId): void
+	{
+		$this->db->execute("UPDATE {$this->t()} SET status = 'disabled', secret_ciphertext = NULL, key_id = NULL, is_default = 0, updated_at = %s WHERE organization_id = %d AND user_id = %d", Db::now(), $organizationId, $userId);
 	}
 
 	private function t(): string

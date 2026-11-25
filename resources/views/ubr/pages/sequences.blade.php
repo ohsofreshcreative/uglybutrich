@@ -203,6 +203,8 @@
 										<button type="button" class="ubr-btn-ghost ubr-btn-sm" @click="openCompany(s.company_id)">Otwórz</button>
 										<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="['scheduled','active','error'].includes(s.status)" @click="control(s, 'pause')" :disabled="busy">Wstrzymaj</button>
 										<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="s.status === 'paused'" @click="control(s, 'resume')" :disabled="busy">Wznów</button>
+										<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="['scheduled','active','paused','error'].includes(s.status)" @click="control(s, 'replied')" :disabled="busy" title="Odbiorca odpisał — zakończ sekwencję (bez kolejnych follow-upów)">Odpowiedział</button>
+										<button type="button" class="ubr-btn-ghost ubr-btn-sm" x-show="['scheduled','active','paused','error'].includes(s.status)" @click="control(s, 'replied_negative')" :disabled="busy" title="Odbiorca odmówił / prosi o brak kontaktu — zakończ i zablokuj adres">Odmówił</button>
 										<button type="button" class="ubr-btn-danger ubr-btn-sm" x-show="['scheduled','active','paused','error'].includes(s.status)" @click="control(s, 'cancel')" :disabled="busy">Anuluj</button>
 									</td>
 								</tr>
@@ -402,7 +404,7 @@
 								<label>Domyślnie na godzinę <input type="number" min="1" class="ubr-input h-9" x-model.number="settings.settings.mailbox_defaults.per_hour"></label>
 								<label>Domyślny odstęp (min) <input type="number" min="1" class="ubr-input h-9" x-model.number="settings.settings.mailbox_defaults.min_interval_minutes"></label>
 							</div>
-							<label class="flex items-start gap-2"><input type="checkbox" class="mt-1" x-model="settings.settings.append_unsubscribe"> <span>Dodawaj stopkę z linkiem rezygnacji (zalecane)</span></label>
+							<p>Stopka z linkiem rezygnacji jest dodawana zawsze, gdy treść wiadomości nie zawiera <code>@{{unsubscribe_link}}</code>.</p>
 							<label class="block">Tekst stopki <textarea class="ubr-input !h-auto py-2" rows="2" x-model="settings.settings.unsubscribe_text"></textarea></label>
 							<button class="ubr-btn-primary ubr-btn-sm" x-show="settings.can_manage" :disabled="busy">Zapisz ustawienia</button>
 						</fieldset>

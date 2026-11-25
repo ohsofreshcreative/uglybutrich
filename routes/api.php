@@ -168,6 +168,7 @@ return [
 	['POST', '/sequences/items/(?P<id>\d+)/pause', [SequenceController::class, 'pause'], 'sequences.manage'],
 	['POST', '/sequences/items/(?P<id>\d+)/resume', [SequenceController::class, 'resume'], 'sequences.manage'],
 	['POST', '/sequences/items/(?P<id>\d+)/cancel', [SequenceController::class, 'cancel'], 'sequences.manage'],
+	['POST', '/sequences/items/(?P<id>\d+)/replied', [SequenceController::class, 'replied'], 'sequences.manage'],
 	['GET', '/sequences/scheduled', [SequenceController::class, 'scheduled'], 'sequences.view'],
 	['GET', '/sequences/sent', [SequenceController::class, 'sent'], 'sequences.view'],
 	['GET', '/sequences/messages/(?P<id>\d+)', [SequenceController::class, 'message'], 'sequences.view'],

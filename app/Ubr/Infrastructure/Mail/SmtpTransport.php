@@ -2,6 +2,8 @@
 
 namespace App\Ubr\Infrastructure\Mail;
 
+use App\Ubr\Infrastructure\Http\UrlGuard;
+
 use PHPMailer\PHPMailer\SMTP;
 
 /**
@@ -81,6 +83,46 @@ class SmtpTransport implements MailTransport
 		return ['ok' => true, 'status' => 'connected', 'message' => 'Połączenie i logowanie poprawne (nie wysłano żadnej wiadomości).'];
 	}
 
+	/**
+	 * Host skrzynki podaje pracownik — bez tej kontroli serwer aplikacji łączyłby się z adresami wewnętrznymi
+	 * (SSRF / skanowanie portów). Wszystkie adresy z DNS muszą być publiczne; zwraca adres do połączenia.
+	 * Lokalny serwer testowy tylko przez filtr `ubr/mail/allow_private_smtp`.
+	 */
+	protected function publicTarget(string $host): ?string
+	{
+		$ips = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : apply_filters('ubr/url_guard/resolve', null, $host);
+
+		if (! is_array($ips)) {
+			$ips = gethostbynamel($host) ?: [];
+
+			if (function_exists('dns_get_record')) {
+				foreach ((array) @dns_get_record($host, DNS_AAAA) as $record) {
+					if (! empty($record['ipv6'])) {
+						$ips[] = $record['ipv6'];
+					}
+				}
+			}
+		}
+
+		$ips = array_values(array_unique(array_filter(array_map('strval', $ips))));
+
+		if (! $ips) {
+			return null;
+		}
+
+		$allowPrivate = (bool) apply_filters('ubr/mail/allow_private_smtp', false, $host);
+
+		foreach ($ips as $ip) {
+			if (! $allowPrivate && ! UrlGuard::isPublicIp($ip)) {
+				return null;
+			}
+		}
+
+		$ipv4 = array_values(array_filter($ips, fn ($ip) => filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)));
+
+		return $ipv4 ? $ipv4[0] : '[' . $ips[0] . ']';
+	}
+
 	protected function client(): TrackingSmtp
 	{
 		if (! class_exists(SMTP::class)) {
@@ -116,8 +158,16 @@ class SmtpTransport implements MailTransport
 		}
 
 		$options = (array) apply_filters('ubr/mail/smtp_options', ['ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'allow_self_signed' => false]], $mailbox);
+		$target = $this->publicTarget($host);
 
-		if (! $smtp->connect(($enc === 'ssl' ? 'ssl://' : '') . $host, $port, $this->timeouts()[0], $options)) {
+		if ($target === null) {
+			return ['status' => 'failed', 'response' => null, 'error' => 'Serwer SMTP ' . $host . ' nie wskazuje na publiczny adres IP — połączenie zablokowane.'];
+		}
+
+		// Połączenie z ZWERYFIKOWANYM adresem IP (bez ponownego DNS), certyfikat sprawdzany dla nazwy serwera.
+		$options['ssl'] = (array) ($options['ssl'] ?? []) + ['peer_name' => $host, 'SNI_enabled' => true];
+
+		if (! $smtp->connect(($enc === 'ssl' ? 'ssl://' : '') . $target, $port, $this->timeouts()[0], $options)) {
 			return ['status' => 'retry', 'response' => null, 'error' => 'Nie można połączyć się z serwerem SMTP ' . $host . ':' . $port . '.'];
 		}
 

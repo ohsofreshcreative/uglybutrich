@@ -222,6 +222,7 @@ class PipelineService
 		} elseif (! $restore && ! $p['archived_at']) {
 			$this->prospects->remove($ctx->organizationId, $prospectId, $ctx->userId);
 			$this->pipeline->event($ctx->organizationId, $prospectId, $ctx->userId, 'archived', null, null);
+			app(\App\Ubr\Services\Sequences\SequenceService::class)->stopForCompany($ctx->organizationId, (int) $p['company_id'], 'Firma zarchiwizowana — sekwencja zatrzymana.');
 		}
 
 		$this->forgetStats($ctx->organizationId);
@@ -655,6 +656,10 @@ class PipelineService
 				? ['do_not_contact' => 1, 'do_not_contact_reason' => $reason !== null ? mb_substr($this->cleanText($reason, 500, false), 0, 500) : null, 'do_not_contact_by' => $ctx->userId, 'do_not_contact_at' => Db::now()]
 				: ['do_not_contact' => 0, 'do_not_contact_reason' => null, 'do_not_contact_by' => null, 'do_not_contact_at' => null]);
 			$this->pipeline->event($ctx->organizationId, $prospectId, $ctx->userId, 'do_not_contact', $value ? '0' : '1', $value ? '1' : '0');
+
+			if ($value) {
+				app(\App\Ubr\Services\Sequences\SequenceService::class)->stopForCompany($ctx->organizationId, (int) $p['company_id'], 'Firma dostała zakaz kontaktu — sekwencja zatrzymana.');
+			}
 			$this->forgetStats($ctx->organizationId);
 		}
 

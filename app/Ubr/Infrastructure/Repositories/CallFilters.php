@@ -105,10 +105,10 @@ final class CallFilters
 		return "(c.main_phone_e164 IS NOT NULL OR EXISTS (SELECT 1 FROM {$cp} cpm WHERE cpm.company_id = c.id AND cpm.org_key = {$org}))";
 	}
 
-	/** Twarda blokada (Lead Intelligence) lub zakaz kontaktu / „nie pasuje” w organizacji — najwyższy priorytet. */
+	/** Twarda blokada (Lead Intelligence) lub zakaz kontaktu / „nie pasuje” w organizacji — najwyższy priorytet. Archiwizacja prospektu NIE zdejmuje zakazu. */
 	public static function blocked(): string
 	{
-		return "(COALESCE(li.has_blocker, 0) = 1 OR (p.id IS NOT NULL AND p.archived_at IS NULL AND (p.do_not_contact = 1 OR p.status = 'not_a_fit' OR p.qualification = 'not_a_fit')))";
+		return "(COALESCE(li.has_blocker, 0) = 1 OR (p.id IS NOT NULL AND (p.do_not_contact = 1 OR p.status = 'not_a_fit' OR p.qualification = 'not_a_fit')))";
 	}
 
 	/** Dane firmy niepotwierdzone (weryfikacja / domena) — bez numeru: najpierw research, nie szukanie telefonu. */
@@ -199,7 +199,7 @@ final class CallFilters
 			'mine' => " AND {$active} AND p.owner_user_id = " . (int) $userId,
 			'others' => " AND {$active} AND p.owner_user_id IS NOT NULL AND p.owner_user_id <> " . (int) $userId,
 			'contacted' => " AND {$active} AND p.last_contact_at IS NOT NULL",
-			'dnc' => " AND {$active} AND p.do_not_contact = 1",
+			'dnc' => ' AND p.id IS NOT NULL AND p.do_not_contact = 1',
 			default => '',
 		};
 

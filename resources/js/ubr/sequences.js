@@ -328,7 +328,9 @@ export function registerSequences(Alpine) {
     },
     async control(seq, action) {
       if (action === 'cancel' && !window.confirm('Anulować sekwencję? Przyszłe wiadomości nie zostaną wysłane (historia zostaje).')) return;
-      const r = await this.run(() => api(`/sequences/items/${seq.sequence_id || seq.id}/${action}`, { method: 'POST' }), (res) => res.message);
+      if (action === 'replied_negative' && !window.confirm('Odbiorca odmówił? Sekwencja zostanie zakończona, a adres zablokowany dla kolejnych wiadomości.')) return;
+      const [path, body] = action.startsWith('replied') ? ['replied', { negative: action === 'replied_negative' }] : [action, undefined];
+      const r = await this.run(() => api(`/sequences/items/${seq.sequence_id || seq.id}/${path}`, { method: 'POST', body }), (res) => res.message);
       if (r) {
         this.loadList();
         this.loadOverview();
@@ -429,8 +431,10 @@ export function registerSequences(Alpine) {
       }
     },
     async setSending(on) {
-      if (on && !window.confirm('Włączyć automatyczną wysyłkę? Zatwierdzone sekwencje zaczną wysyłać wiadomości do odbiorców według harmonogramu.')) return;
-      const r = await this.run(() => api('/sequences/settings', { method: 'POST', body: { sending_enabled: on, confirm_duplicates: this.enableForm.confirm_duplicates } }), on ? 'Automatyczna wysyłka włączona.' : 'Automatyczna wysyłka wyłączona.');
+      const backlog = this.settings?.settings?.backlog || 0;
+      const warn = backlog ? `\n\nUWAGA: czeka ${backlog} zaległych wiadomości — zaczną wychodzić od razu (w tempie limitów skrzynek). Sprawdź je wcześniej w zakładce Scheduled.` : '';
+      if (on && !window.confirm('Włączyć automatyczną wysyłkę? Zatwierdzone sekwencje zaczną wysyłać wiadomości do odbiorców według harmonogramu.' + warn)) return;
+      const r = await this.run(() => api('/sequences/settings', { method: 'POST', body: { sending_enabled: on, confirm_duplicates: this.enableForm.confirm_duplicates, confirm_backlog: on } }), on ? 'Automatyczna wysyłka włączona.' : 'Automatyczna wysyłka wyłączona.');
       if (r) {
         this.settings = r;
         this.loadOverview();
@@ -625,9 +629,11 @@ export function registerSequences(Alpine) {
     async control(action) {
       if (action === 'cancel' && !window.confirm('Anulować sekwencję? Przyszłe wiadomości nie zostaną wysłane. Wysłanych wiadomości nie da się cofnąć.')) return;
       if (action === 'delete' && !window.confirm('Usunąć szkic sekwencji?')) return;
+      if (action === 'replied_negative' && !window.confirm('Odbiorca odmówił? Sekwencja zostanie zakończona, a adres zablokowany dla kolejnych wiadomości.')) return;
+      const [path, body] = action.startsWith('replied') ? ['replied', { negative: action === 'replied_negative' }] : [action, undefined];
       this.busy = true;
       try {
-        const r = action === 'delete' ? await api(`/sequences/items/${this.detail.id}`, { method: 'DELETE' }) : await api(`/sequences/items/${this.detail.id}/${action}`, { method: 'POST' });
+        const r = action === 'delete' ? await api(`/sequences/items/${this.detail.id}`, { method: 'DELETE' }) : await api(`/sequences/items/${this.detail.id}/${path}`, { method: 'POST', body });
         this.$store.ubr.toast(r.message || 'Usunięto szkic.');
         if (action === 'delete') this.detail = null;
         await this.load(action === 'delete' ? null : this.detail.id);

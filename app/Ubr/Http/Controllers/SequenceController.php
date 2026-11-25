@@ -157,6 +157,12 @@ class SequenceController
 		return $this->sequences->cancel($this->tenants->require('sequences.manage'), (int) $r['id']);
 	}
 
+	/** Odbiorca odpowiedział — koniec sekwencji (negative: dodatkowo blokada adresu). */
+	public function replied(WP_REST_Request $r): array
+	{
+		return $this->sequences->markReplied($this->tenants->require('sequences.manage'), (int) $r['id'], ! empty($this->json($r)['negative']));
+	}
+
 	public function destroy(WP_REST_Request $r): array
 	{
 		return $this->sequences->deleteDraft($this->tenants->require('sequences.manage'), (int) $r['id']);

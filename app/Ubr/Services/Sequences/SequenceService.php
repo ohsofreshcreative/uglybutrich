@@ -114,7 +114,7 @@ class SequenceService
 			'mailbox' => $mailbox ? $this->mailboxes->present($mailbox) : null,
 			'messages' => array_map(fn ($m) => $this->presentMessage($m, $values), $messages),
 			'preview' => $s['status'] === 'draft' ? CampaignService::preview(array_map(fn ($m) => ['subject' => $m['subject'], 'body' => $m['body'], 'delay_days' => (int) $m['delay_days'], 'is_active' => (bool) $m['is_active']], $messages), $settings['window'], $values + ['unsubscribe_link' => '[link rezygnacji]'], $this->startBase($settings)) : null,
-			'footer' => $this->settings->get($ctx->organizationId)['append_unsubscribe'] ? $this->footer($ctx->organizationId) : null,
+			'footer' => $this->footer($ctx->organizationId),
 			'can_manage' => $this->canManage($ctx, $s),
 			'test_mailboxes_allowed' => MailboxService::testMailboxesAllowed(),
 		];
@@ -410,6 +410,57 @@ class SequenceService
 		return ['cancelled' => true, 'message' => $sending ? 'Sekwencja anulowana. Wiadomość w trakcie wysyłki mogła już zostać przekazana do serwera poczty — tego nie da się cofnąć.' : 'Sekwencja anulowana — przyszłe wiadomości nie zostaną wysłane. Historia wysłanych zachowana.', 'sequence' => $this->get($ctx, $id)];
 	}
 
+	/**
+	 * Odbiorca odpowiedział (pracownik widzi odpowiedź w swojej skrzynce) — sekwencja kończy się, kolejne follow-upy
+	 * nie wychodzą. Odpowiedź negatywna / prośba o niekontaktowanie = dodatkowo blokada adresu w organizacji.
+	 * Aplikacja nie czyta skrzynek (brak IMAP) — dlatego to decyzja pracownika.
+	 */
+	public function markReplied(TenantContext $ctx, int $id, bool $negative = false): array
+	{
+		$s = $this->manageable($ctx, $id);
+
+		if (! in_array($s['status'], SequenceCatalog::LIVE, true)) {
+			throw UbrException::invalid('Sekwencja jest już zakończona.');
+		}
+
+		$name = wp_get_current_user()->display_name ?: 'pracownik';
+		$this->finish($id, 'completed', ($negative ? 'Odbiorca odpowiedział odmownie — adres zablokowany' : 'Odbiorca odpowiedział') . ' (oznaczył: ' . $name . '). Kolejne wiadomości nie zostaną wysłane.');
+
+		if ($negative) {
+			$this->suppress($ctx->organizationId, (string) $s['recipient_email'], 'manual', $ctx->userId, $id, 'Odpowiedź odmowna na sekwencję #' . $id);
+		}
+
+		do_action('ubr/sequence/replied', $id, $ctx->organizationId, (int) $s['company_id'], $negative);
+
+		return ['replied' => true, 'message' => $negative ? 'Sekwencja zakończona, adres zablokowany dla kolejnych wiadomości.' : 'Sekwencja zakończona — odbiorca odpowiedział.', 'sequence' => $this->get($ctx, $id)];
+	}
+
+	/** Zatrzymanie wszystkich trwających sekwencji firmy w organizacji (archiwizacja prospektu, zakaz kontaktu). */
+	public function stopForCompany(int $organizationId, int $companyId, string $message): int
+	{
+		$ids = $this->db->column("SELECT id FROM {$this->t()} WHERE organization_id = %d AND company_id = %d AND status IN ('draft','scheduled','active','paused','error')", $organizationId, $companyId);
+
+		foreach ($ids as $sid) {
+			$this->finish((int) $sid, 'cancelled', $message);
+		}
+
+		return count($ids);
+	}
+
+	/** Pracownik usunięty z organizacji: jego sekwencje anulowane, skrzynki wyłączone, hasła SMTP usunięte. */
+	public function stopForMember(int $organizationId, int $userId): int
+	{
+		$ids = $this->db->column("SELECT id FROM {$this->t()} WHERE organization_id = %d AND owner_user_id = %d AND status IN ('draft','scheduled','active','paused','error')", $organizationId, $userId);
+
+		foreach ($ids as $sid) {
+			$this->finish((int) $sid, 'cancelled', 'Właściciel sekwencji został usunięty z organizacji.');
+		}
+
+		$this->mailboxes->disableForMember($organizationId, $userId);
+
+		return count($ids);
+	}
+
 	/** Usunięcie SZKICU (nic nie zostało wysłane). */
 	public function deleteDraft(TenantContext $ctx, int $id): array
 	{
@@ -452,7 +503,10 @@ class SequenceService
 				throw UbrException::invalid('Wybierz: wysłana albo niewysłana.');
 			}
 
-			if ($s['status'] === 'error' && $s['error_code'] === 'unknown_result') {
+			$fresh = $this->db->row("SELECT status, error_code FROM {$this->t()} WHERE id = %d", (int) $s['id']);
+
+			// Ostatni krok potwierdzony jako wysłany kończy sekwencję (afterSent) — wtedy nie wolno jej „wstrzymać”.
+			if ($fresh && $fresh['status'] === 'error' && $fresh['error_code'] === 'unknown_result') {
 				$this->db->update(Tables::SEQ_SEQUENCES, ['status' => 'paused', 'paused_at' => Db::now(), 'error_code' => null, 'error_message' => 'Wynik potwierdzony — wznów sekwencję, aby kontynuować.', 'updated_at' => Db::now()], ['id' => (int) $s['id']]);
 			}
 		});
@@ -534,7 +588,8 @@ class SequenceService
 			$out[] = ['code' => 'suppressed', 'message' => 'Adres zablokowany: ' . SequenceCatalog::label(SequenceCatalog::SUPPRESSION_REASONS, $sup['reason']) . '.'];
 		}
 
-		$p = $this->prospect($organizationId, $companyId);
+		// Zakaz kontaktu / „nie pasuje” obowiązuje także po archiwizacji prospektu.
+		$p = $this->db->row("SELECT do_not_contact, status, qualification FROM {$this->db->table(Tables::PROSPECTS)} WHERE organization_id = %d AND company_id = %d", $organizationId, $companyId);
 
 		if ($p && ((int) $p['do_not_contact'] === 1 || $p['status'] === 'not_a_fit' || $p['qualification'] === 'not_a_fit')) {
 			$out[] = ['code' => 'do_not_contact', 'message' => 'Firma ma zakaz kontaktu (DO_NOT_CONTACT) lub oznaczenie „nie pasuje”.'];
@@ -551,6 +606,12 @@ class SequenceService
 
 			if ($c && ((int) $c['active'] !== 1 || $this->db->value("SELECT id FROM {$this->db->table(Tables::CONTACT_SUPPRESSIONS)} WHERE company_id = %d AND person_key = %s", $companyId, (string) $c['person_key']))) {
 				$out[] = ['code' => 'contact_excluded', 'message' => 'Kontakt wyłączony ręcznie przez pracownika.'];
+			}
+
+			$review = $this->db->value("SELECT status FROM {$this->db->table(Tables::CONTACT_REVIEWS)} WHERE organization_id = %d AND contact_id = %d", $organizationId, $contactId);
+
+			if (in_array($review, ['rejected', 'excluded', 'outdated'], true)) {
+				$out[] = ['code' => 'contact_rejected', 'message' => 'Kontakt odrzucony, wykluczony lub oznaczony jako nieaktualny przez organizację.'];
 			}
 		}
 
@@ -692,6 +753,18 @@ class SequenceService
 	public function afterSent(int $sequenceId, DateTimeImmutable $sentAt): void
 	{
 		$s = $this->db->row("SELECT * FROM {$this->t()} WHERE id = %d", $sequenceId);
+
+		if (! $s) {
+			return;
+		}
+
+		if (in_array($s['status'], ['completed', 'cancelled'], true)) {
+			// Wiadomość wyszła już po zakończeniu / anulowaniu (była w trakcie wysyłki) — tylko historia, bez kolejnych kroków.
+			$this->db->update(Tables::SEQ_SEQUENCES, ['sent_count' => (int) $this->db->value("SELECT COUNT(*) FROM {$this->m()} WHERE sequence_id = %d AND status = 'sent'", $sequenceId), 'last_sent_at' => SendWindow::mysql($sentAt), 'updated_at' => Db::now()], ['id' => $sequenceId]);
+
+			return;
+		}
+
 		$settings = $this->seqSettings($s);
 		$next = $this->db->row("SELECT * FROM {$this->m()} WHERE sequence_id = %d AND is_active = 1 AND status = 'pending' ORDER BY position ASC LIMIT 1", $sequenceId);
 		$sent = (int) $this->db->value("SELECT COUNT(*) FROM {$this->m()} WHERE sequence_id = %d AND status = 'sent'", $sequenceId);
@@ -731,7 +804,13 @@ class SequenceService
 	/** Błąd sekwencji (wymaga uwagi pracownika) — przyszłe wiadomości wstrzymane, adres nadal zarezerwowany. */
 	public function fail(int $sequenceId, string $code, ?string $message = null): void
 	{
-		$this->db->update(Tables::SEQ_SEQUENCES, ['status' => 'error', 'error_code' => $code, 'error_message' => mb_substr($message ?? SequenceCatalog::label(SequenceCatalog::ERROR_LABELS, $code), 0, 500), 'updated_at' => Db::now()], ['id' => $sequenceId]);
+		$this->db->execute(
+			"UPDATE {$this->t()} SET status = 'error', error_code = %s, error_message = %s, updated_at = %s WHERE id = %d AND status NOT IN ('completed','cancelled')",
+			$code,
+			mb_substr($message ?? SequenceCatalog::label(SequenceCatalog::ERROR_LABELS, $code), 0, 500),
+			Db::now(),
+			$sequenceId
+		);
 	}
 
 	/**
@@ -748,7 +827,10 @@ class SequenceService
 	{
 		$s = $this->settings->get($organizationId);
 
-		return $s['append_unsubscribe'] ? (string) $s['unsubscribe_text'] : '';
+		// Link rezygnacji jest obowiązkowy — wyłączenie stopki nie usuwa go z wiadomości.
+		$text = (string) $s['unsubscribe_text'];
+
+		return str_contains($text, '{{unsubscribe_link}}') ? $text : SequenceSettings::DEFAULTS['unsubscribe_text'];
 	}
 
 	/** @return array{window: array, start_at: ?string, end_at: ?string} */
@@ -864,7 +946,20 @@ class SequenceService
 	{
 		$s = $this->db->row("SELECT * FROM {$this->t()} WHERE id = %d", $sequenceId);
 		$settings = $this->seqSettings($s);
+
+		// Poprzedni krok w trakcie wysyłki albo o nieznanym wyniku: kolejny krok czeka (odstęp liczony od faktycznej wysyłki).
+		if ((int) $this->db->value("SELECT COUNT(*) FROM {$this->m()} WHERE sequence_id = %d AND status IN ('sending','unknown_result')", $sequenceId)) {
+			$this->db->execute("UPDATE {$this->m()} SET status = 'pending', scheduled_at = NULL, updated_at = %s WHERE sequence_id = %d AND status = 'scheduled'", Db::now(), $sequenceId);
+			$this->db->update(Tables::SEQ_SEQUENCES, ['next_send_at' => null, 'updated_at' => Db::now()], ['id' => $sequenceId]);
+
+			return;
+		}
+
 		$scheduled = $this->db->row("SELECT * FROM {$this->m()} WHERE sequence_id = %d AND status = 'scheduled' ORDER BY position ASC LIMIT 1", $sequenceId);
+
+		if ($scheduled) {
+			$this->db->execute("UPDATE {$this->m()} SET status = 'pending', scheduled_at = NULL, updated_at = %s WHERE sequence_id = %d AND status = 'scheduled' AND id <> %d", Db::now(), $sequenceId, (int) $scheduled['id']);
+		}
 
 		if (! $scheduled || ! (int) $scheduled['is_active']) {
 			if ($scheduled) {

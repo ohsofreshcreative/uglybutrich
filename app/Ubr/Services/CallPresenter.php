@@ -194,7 +194,7 @@ class CallPresenter
 			$owner === $ctx->userId => 'MINE',
 			default => 'ASSIGNED_OTHER',
 		};
-		$dnc = $active && ! empty($r['p_dnc']);
+		$dnc = ! empty($r['prospect_id']) && ! empty($r['p_dnc']); // zakaz kontaktu obowiązuje także po archiwizacji
 		$flags = [$state];
 
 		if ($status && in_array($status, PipelineCatalog::IN_PROGRESS_STATUSES, true)) {

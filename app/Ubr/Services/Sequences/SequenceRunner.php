@@ -275,7 +275,8 @@ class SequenceRunner
 		}
 
 		$outgoing = new OutgoingMessage((string) $mailbox['email'], (string) ($mailbox['from_name'] ?? ''), $email, (string) ($s['recipient_name'] ?? ''), $subject, $body, $messageIdHeader, [
-			'List-Unsubscribe' => '<' . $values['unsubscribe_link'] . '>, <mailto:' . $mailbox['email'] . '?subject=' . rawurlencode('Rezygnacja') . '>',
+			// Tylko link one-click: aplikacja nie czyta skrzynek, więc rezygnacja przez mailto: nie miałaby skutku.
+			'List-Unsubscribe' => '<' . $values['unsubscribe_link'] . '>',
 			'List-Unsubscribe-Post' => 'List-Unsubscribe=One-Click',
 		]);
 		$transport = $transportName === 'test' ? new LogTransport() : $this->mailboxes->transport($mailbox);
@@ -358,22 +359,23 @@ class SequenceRunner
 	{
 		$limits = $this->mailboxes->limits((array) (json_decode((string) ($mailbox['limits'] ?? ''), true) ?: []), (int) $mailbox['organization_id']);
 		$id = (int) $mailbox['id'];
-		$base = "SELECT {expr} FROM {$this->m()} WHERE mailbox_id = %d AND status IN ('sent','sending','unknown_result') AND transport <> 'test' AND sent_at IS NOT NULL AND sent_at >= %s";
+		// `sending` / `unknown_result` nie mają sent_at, a prawdopodobnie wyszły — liczone od ostatniej zmiany.
+		$base = "SELECT {expr} FROM {$this->m()} WHERE mailbox_id = %d AND status IN ('sent','sending','unknown_result') AND transport <> 'test' AND COALESCE(sent_at, updated_at) >= %s";
 		$waits = [];
 		$dayAgo = gmdate('Y-m-d H:i:s', $now->getTimestamp() - DAY_IN_SECONDS);
 		$hourAgo = gmdate('Y-m-d H:i:s', $now->getTimestamp() - HOUR_IN_SECONDS);
 
 		if ((int) $this->db->value(str_replace('{expr}', 'COUNT(*)', $base), $id, $dayAgo) >= $limits['per_day']) {
-			$oldest = (string) $this->db->value(str_replace('{expr}', 'MIN(sent_at)', $base), $id, $dayAgo);
+			$oldest = (string) $this->db->value(str_replace('{expr}', 'MIN(COALESCE(sent_at, updated_at))', $base), $id, $dayAgo);
 			$waits[] = SendWindow::utc($oldest)->modify('+1 day +1 minute');
 		}
 
 		if ((int) $this->db->value(str_replace('{expr}', 'COUNT(*)', $base), $id, $hourAgo) >= $limits['per_hour']) {
-			$oldest = (string) $this->db->value(str_replace('{expr}', 'MIN(sent_at)', $base), $id, $hourAgo);
+			$oldest = (string) $this->db->value(str_replace('{expr}', 'MIN(COALESCE(sent_at, updated_at))', $base), $id, $hourAgo);
 			$waits[] = SendWindow::utc($oldest)->modify('+1 hour +1 minute');
 		}
 
-		$last = $this->db->value("SELECT MAX(sent_at) FROM {$this->m()} WHERE mailbox_id = %d AND transport <> 'test' AND status IN ('sent','sending','unknown_result')", $id);
+		$last = $this->db->value("SELECT MAX(COALESCE(sent_at, updated_at)) FROM {$this->m()} WHERE mailbox_id = %d AND transport <> 'test' AND status IN ('sent','sending','unknown_result')", $id);
 
 		if ($last && SendWindow::utc((string) $last)->modify('+' . $limits['min_interval_minutes'] . ' minutes') > $now) {
 			$waits[] = SendWindow::utc((string) $last)->modify('+' . $limits['min_interval_minutes'] . ' minutes');

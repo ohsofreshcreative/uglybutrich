@@ -124,6 +124,7 @@ class OrganizationService
 		}
 
 		$this->members->remove($ctx->organizationId, $userId);
+		app(\App\Ubr\Services\Sequences\SequenceService::class)->stopForMember($ctx->organizationId, $userId);
 
 		if ((int) get_user_meta($userId, TenantResolver::ACTIVE_META, true) === $ctx->organizationId) {
 			delete_user_meta($userId, TenantResolver::ACTIVE_META);
