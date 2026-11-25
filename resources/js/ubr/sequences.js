@@ -520,6 +520,7 @@ export function registerSequences(Alpine) {
       try {
         this.detail = await api(`/sequences/items/${seqId}`);
         this.form = this.detail.status === 'draft' ? this.toForm(this.detail) : null;
+        if (this.form && this.detail.can_manage !== false) this.ensureMailboxes().catch(() => {});
         this.approve = { confirm: false, test_mode: !this.detail.mailbox || this.detail.mailbox.provider === 'test' };
         this.conflict = null;
         if (['scheduled', 'active'].includes(this.detail.status)) this.poll = setTimeout(() => this.$store.ubr.drawer.open && this.detail?.id === seqId && this.open(seqId), 30000);
@@ -608,6 +609,9 @@ export function registerSequences(Alpine) {
     },
     async ensureMailboxes() {
       if (!this.mailboxes.length) this.mailboxes = (await api('/sequences/mailboxes')).items;
+      // Szkic bez skrzynki (np. z synchronizacji ClickUp): lista pokazywałaby pierwszą pozycję, choć nic nie jest wybrane —
+      // ustawiamy domyślną skrzynkę, żeby zapis / start faktycznie ją wysłały.
+      if (this.form && !this.form.mailbox_id && this.mailboxes.length) this.form.mailbox_id = (this.mailboxes.find((m) => m.is_default) || this.mailboxes[0]).id;
     },
     async start(replace = false) {
       if (!this.approve.confirm) return this.$store.ubr.toast('Zaznacz potwierdzenie odbiorcy, treści i harmonogramu.', 'error');
