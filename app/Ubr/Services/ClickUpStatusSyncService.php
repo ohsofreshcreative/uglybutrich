@@ -21,7 +21,7 @@ use App\Ubr\Support\UbrException;
 use Throwable;
 
 /**
- * Status zadania w ClickUp → status w Prospects (kierunek ClickUp → Ugly but Rich, bez pętli: aplikacja nigdy nie
+ * Status zadania w ClickUp → status w Pipeline (kierunek ClickUp → Ugly but Rich, bez pętli: aplikacja nigdy nie
  * zmienia statusu zadania w ClickUp).
  *
  * - Odczyt w tle (co ~5 min): zadania list, do których organizacja eksportuje firmy, zmienione od ostatniego sprawdzenia
@@ -127,7 +127,7 @@ class ClickUpStatusSyncService
 				}
 
 				if ($pipeline !== '' && ! PipelineCatalog::isStatus($pipeline)) {
-					throw UbrException::invalid('Nieznany status Prospects w regule „' . $status . '”.');
+					throw UbrException::invalid('Nieznany status Pipeline w regule „' . $status . '”.');
 				}
 
 				$campaignId = (int) ($r['campaign_id'] ?? 0);

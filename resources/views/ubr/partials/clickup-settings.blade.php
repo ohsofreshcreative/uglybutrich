@@ -181,14 +181,14 @@
 				</div>
 			</template>
 
-			{{-- Status zadania w ClickUp → status w Prospects (+ opcjonalnie szkic sekwencji); kierunek tylko ClickUp → aplikacja --}}
+			{{-- Status zadania w ClickUp → status w Pipeline (+ opcjonalnie szkic sekwencji); kierunek tylko ClickUp → aplikacja --}}
 			<template x-if="statusSync">
 				<div class="rounded-xl border border-line p-4 space-y-3" data-clickup-status-sync>
 					<div class="flex flex-wrap items-center gap-2">
-						<h3 class="font-extrabold text-[14px] flex-1">Statusy z ClickUp → Prospects</h3>
+						<h3 class="font-extrabold text-[14px] flex-1">Statusy z ClickUp → Pipeline</h3>
 						<span :class="statusSync.enabled ? 'ubr-badge-confirmed' : 'ubr-badge-unavailable'" x-text="statusSync.enabled ? 'Włączone' : 'Wyłączone'"></span>
 					</div>
-					<p class="text-[12px] text-ink-muted">Gdy zmienisz status zadania w ClickUp (np. na „Cold mail”), aplikacja w ciągu ok. 5 minut ustawi wybrany status firmy w Prospects i — jeśli wskażesz kampanię — przygotuje <strong>szkic</strong> sekwencji dla opiekuna firmy (nic się nie wysyła bez zatwierdzenia). Działa dla zadań utworzonych przez Ugly but Rich. Aplikacja nie zmienia statusów w ClickUp.</p>
+					<p class="text-[12px] text-ink-muted">Gdy zmienisz status zadania w ClickUp (np. na „Cold call” albo „Cold mail”), aplikacja w ciągu ok. 5 minut przeniesie firmę do wybranej kolumny Pipeline i — jeśli wskażesz kampanię — przygotuje <strong>szkic</strong> sekwencji dla opiekuna firmy (nic się nie wysyła bez zatwierdzenia). Działa dla zadań utworzonych przez Ugly but Rich. Aplikacja nie zmienia statusów w ClickUp.</p>
 					<template x-if="statusSync.can_manage">
 						<div class="space-y-3 text-[13px]">
 							<label class="flex items-start gap-2"><input type="checkbox" class="mt-0.5" :checked="statusSync.connection?.is_mine" :disabled="busy || !statusSync.can_use_mine" @change="$event.target.checked && saveStatusSync({ use_my_connection: true })"> <span>Odczytuj statusy moim połączeniem ClickUp<span class="text-ink-muted" x-show="statusSync.connection && !statusSync.connection.is_mine" x-text="' (teraz: ' + (statusSync.connection?.user || '—') + ')'"></span></span></label>
@@ -198,7 +198,7 @@
 										<div>
 											<input class="ubr-input" list="cu-statuses" x-model="r.clickup_status" placeholder="Status w ClickUp, np. cold mail" aria-label="Status w ClickUp">
 										</div>
-										<select class="ubr-input" x-model="r.pipeline_status" aria-label="Status w Prospects">
+										<select class="ubr-input" x-model="r.pipeline_status" aria-label="Kolumna w Pipeline">
 											<option value="">— bez zmiany statusu —</option>
 											<template x-for="p in statusSync.pipeline_statuses" :key="p.key"><option :value="p.key" x-text="p.label"></option></template>
 										</select>

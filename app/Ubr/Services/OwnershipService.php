@@ -177,9 +177,9 @@ class OwnershipService
 		// Etap pipeline tylko „do przodu” z etapów początkowych (bez cofania i bez zamykania jako „Utracony” bez powodu).
 		$status = (string) $this->db->value("SELECT status FROM {$this->db->table(Tables::PROSPECTS)} WHERE id = %d AND organization_id = %d", $claim['prospect_id'], $ctx->organizationId);
 		$next = match (true) {
-			$outcome === 'meeting_booked' && in_array($status, ['new', 'qualified', 'to_contact', 'contacted', 'follow_up'], true) => 'in_discussion',
-			$outcome === 'call_back' && in_array($status, ['new', 'qualified', 'to_contact', 'contacted'], true) => 'follow_up',
-			in_array($status, ['new', 'qualified', 'to_contact'], true) && $outcome !== 'wrong_number' => 'contacted',
+			$outcome === 'meeting_booked' && in_array($status, ['new', 'qualified', 'to_contact', 'cold_call', 'contacted', 'follow_up'], true) => 'in_discussion',
+			$outcome === 'call_back' && in_array($status, ['new', 'qualified', 'to_contact', 'cold_call', 'contacted'], true) => 'follow_up',
+			in_array($status, ['new', 'qualified', 'to_contact', 'cold_call'], true) && $outcome !== 'wrong_number' => 'contacted',
 			default => null,
 		};
 

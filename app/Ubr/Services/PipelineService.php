@@ -3,8 +3,10 @@
 namespace App\Ubr\Services;
 
 use App\Ubr\Domain\Pipeline\PipelineCatalog;
+use App\Ubr\Domain\Sequences\SequenceCatalog;
 use App\Ubr\Domain\Tenancy\TenantContext;
 use App\Ubr\Infrastructure\Database\Db;
+use App\Ubr\Infrastructure\Database\Tables;
 use App\Ubr\Infrastructure\Repositories\CompanyRepository;
 use App\Ubr\Infrastructure\Repositories\MemberRepository;
 use App\Ubr\Infrastructure\Repositories\PipelineRepository;
@@ -56,10 +58,70 @@ class PipelineService
 			}
 
 			$page = $this->pipeline->column($ctx->organizationId, $key, $filters, $only === $key ? $offset : 0, $limit);
-			$columns[] = ['key' => $key, 'label' => $def['label'], 'description' => $def['description'], 'closed' => $def['closed'], 'total' => $counts[$key] ?? 0, 'items' => array_map(fn ($r) => $this->card($r), $page['items'])];
+			$seqs = $this->sequenceCards($ctx, array_map(fn ($r) => (int) $r['id'], $page['items']));
+			$columns[] = ['key' => $key, 'label' => $def['label'], 'description' => $def['description'], 'closed' => $def['closed'], 'total' => $counts[$key] ?? 0, 'items' => array_map(fn ($r) => $this->card($r) + ['sequence' => $seqs[(int) $r['id']] ?? null], $page['items'])];
 		}
 
 		return ['columns' => $columns, 'members' => $this->memberOptions($ctx), 'priorities' => PipelineCatalog::PRIORITIES];
+	}
+
+	/**
+	 * Sekwencja e-mail firmy na karcie Pipeline (jedno zapytanie na kolumnę): szkic / trwająca, a gdy brak — ostatnia.
+	 * Tylko odczyt; uruchomienie wysyłki wyłącznie w karcie firmy (podgląd + potwierdzenie).
+	 *
+	 * @param list<int> $companyIds
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function sequenceCards(TenantContext $ctx, array $companyIds): array
+	{
+		if (! $companyIds) {
+			return [];
+		}
+
+		$db = app(Db::class);
+		$rows = $db->rows(
+			"SELECT id, company_id, owner_user_id, status, name, campaign_name, recipient_email, mailbox_id, sent_count, step_count, next_send_at, test_mode
+			FROM {$db->table(Tables::SEQ_SEQUENCES)} WHERE organization_id = %d AND company_id IN (" . implode(',', array_map('intval', $companyIds)) . ")
+			ORDER BY status IN ('draft','scheduled','active','paused','error') DESC, id DESC",
+			$ctx->organizationId
+		);
+		$out = [];
+
+		foreach ($rows as $s) {
+			$cid = (int) $s['company_id'];
+
+			if (isset($out[$cid])) {
+				continue;
+			}
+
+			$missing = [];
+
+			if ($s['status'] === 'draft') {
+				if (! $s['recipient_email']) {
+					$missing[] = 'odbiorca';
+				}
+
+				if (! $s['mailbox_id']) {
+					$missing[] = 'skrzynka';
+				}
+			}
+
+			$out[$cid] = [
+				'id' => (int) $s['id'],
+				'status' => $s['status'],
+				'status_label' => SequenceCatalog::label(SequenceCatalog::SEQUENCE_STATUSES, $s['status']),
+				'campaign' => $s['campaign_name'] ?: $s['name'],
+				'recipient' => $s['recipient_email'] ?: null,
+				'sent' => (int) $s['sent_count'],
+				'steps' => (int) $s['step_count'],
+				'next_send_at' => $s['next_send_at'] ? gmdate('c', strtotime($s['next_send_at'] . ' UTC')) : null,
+				'test_mode' => (bool) $s['test_mode'],
+				'missing' => $missing,
+				'can_manage' => $ctx->can('sequences.manage') && ((int) $s['owner_user_id'] === $ctx->userId || $ctx->can('sequences.team')),
+			];
+		}
+
+		return $out;
 	}
 
 	/**

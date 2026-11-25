@@ -3,6 +3,7 @@
  * tutaj tylko wywołania API i prezentacja. Treści użytkownika wyświetlamy wyłącznie przez x-text (bez x-html).
  */
 import { api } from './api.js';
+import { SEQ_TONES } from './sequences.js';
 
 const can = (ability) => (window.UBR?.abilities || []).includes(ability);
 
@@ -211,6 +212,14 @@ export function registerPipeline(Alpine) {
     get statusOptions() {
       return this.columns.map((c) => ({ key: c.key, label: c.label }));
     },
+    seqBadge(s) {
+      return this.$store.ubr.stageBadge(SEQ_TONES[s.status] || 'muted');
+    },
+    // Sekwencja (szkic, podgląd, zatwierdzenie i start) wyłącznie w zakładce Mailing karty firmy — bez kopii logiki wysyłki.
+    openMailing(card) {
+      this.$store.ubr.drawer.tab = 'mailing';
+      this.$store.ubr.openCompany(card.company_id);
+    },
 
     query(extra = {}) {
       const f = { ...this.filters };
@@ -222,6 +231,7 @@ export function registerPipeline(Alpine) {
       this.load();
       window.addEventListener('ubr:pipeline-changed', () => this.load(true));
       window.addEventListener('ubr:clickup-changed', () => this.load(true));
+      window.addEventListener('ubr:sequences-changed', () => this.load(true));
     },
 
     async load(silent = false) {
@@ -520,7 +530,7 @@ export function registerPipeline(Alpine) {
       }[key] || [];
       return (this.fields || []).filter((f) => types.includes(f.type));
     },
-    /* --- Statusy ClickUp → Prospects (+ szkic sekwencji) --- */
+    /* --- Statusy ClickUp → Pipeline (+ szkic sekwencji) --- */
     async loadStatusSync() {
       try {
         this.statusSync = await api('/clickup/status-sync');

@@ -574,6 +574,7 @@ export function registerSequences(Alpine) {
         const d = await api(`/companies/${this.companyId()}/sequences`, { method: 'POST', body: { campaign_id: this.assign.campaign_id || null, recipient, mailbox_id: this.assign.mailbox_id } });
         this.$store.ubr.toast('Utworzono szkic sekwencji — sprawdź i dostosuj wiadomości. Nic nie zostało wysłane.');
         this.assign = null;
+        window.dispatchEvent(new CustomEvent('ubr:sequences-changed'));
         await this.load(d.id);
       } catch (e) {
         this.$store.ubr.error(e);
@@ -618,6 +619,7 @@ export function registerSequences(Alpine) {
         });
         this.conflict = null;
         this.$store.ubr.toast(r.message);
+        window.dispatchEvent(new CustomEvent('ubr:sequences-changed'));
         await this.load(this.detail.id);
       } catch (e) {
         if (e.status === 409 && e.data?.conflict) this.conflict = e.data;
@@ -635,6 +637,7 @@ export function registerSequences(Alpine) {
       try {
         const r = action === 'delete' ? await api(`/sequences/items/${this.detail.id}`, { method: 'DELETE' }) : await api(`/sequences/items/${this.detail.id}/${path}`, { method: 'POST', body });
         this.$store.ubr.toast(r.message || 'Usunięto szkic.');
+        window.dispatchEvent(new CustomEvent('ubr:sequences-changed'));
         if (action === 'delete') this.detail = null;
         await this.load(action === 'delete' ? null : this.detail.id);
       } catch (e) {

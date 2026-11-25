@@ -1079,7 +1079,7 @@ Własny ekran logowania w stylu aplikacji zamiast `wp-login.php`; po zalogowaniu
 - **Wylogowanie:** link w aplikacji → `/app/login/?loggedout=1` („Wylogowano”). Poprawka: `wp_logout_url()` zwraca adres zakodowany dla HTML, a Blade kodował go drugi raz (`&amp;amp;`) — ginął nonce i WordPress pokazywał ekran potwierdzenia.
 - **Wyłączenie:** `add_filter('ubr/login/enabled', '__return_false')` przywraca standardowe logowanie WordPressa.
 
-## 24. Statusy ClickUp → Prospects (+ szkic sekwencji) (25.11.2026)
+## 24. Statusy ClickUp → Pipeline (+ szkic sekwencji) (25.11.2026)
 
 `ClickUpStatusSyncService`. Kierunek wyłącznie ClickUp → Ugly but Rich (aplikacja nigdy nie zmienia statusu zadania w ClickUp — brak pętli).
 
@@ -1093,4 +1093,7 @@ Własny ekran logowania w stylu aplikacji zamiast `wp-login.php`; po zalogowaniu
 - Reguła: status pipeline (przez `PipelineService::update`, kontekst właściciela połączenia) + opcjonalnie SZKIC sekwencji z aktywnej kampanii
   dla opiekuna firmy (odbiorca: pierwszy decydent z e-mailem bez blokad, inaczej ogólny e-mail firmy). Szkic tylko, gdy firma nie ma szkicu
   ani trwającej sekwencji i nie ma zakazu kontaktu; wysyłka zawsze wymaga zatwierdzenia sekwencji.
+- Kolumny Pipeline: `cold_call` (Cold Call, status przed kontaktem jak `to_contact`) i `mailing` (etykieta „Cold Mail”, klucz bez zmian).
+  Karta Pipeline pokazuje sekwencję firmy (`PipelineService::sequenceCards`, jedno zapytanie na kolumnę: kampania, odbiorca, stan,
+  wysłano X/Y, braki). „Wyślij…” otwiera zakładkę Mailing karty firmy (podgląd + potwierdzenie) — bez osobnej ścieżki wysyłki.
 - Testy: `tests/clickup-status-sync.php` (mock ClickUp; tylko odczyt).

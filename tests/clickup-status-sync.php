@@ -1,6 +1,6 @@
 <?php
 /**
- * Status zadania w ClickUp → status w Prospects (+ szkic sekwencji). ClickUp WYŁĄCZNIE na mockach HTTP.
+ * Status zadania w ClickUp → status w Pipeline (+ szkic sekwencji). ClickUp WYŁĄCZNIE na mockach HTTP.
  *
  * Dołączane z tests/run.php po discover-claim-p1043.php (korzysta z $orgF, $uF, $uF1, $fMk, $connF1, $db).
  */
@@ -14,7 +14,7 @@ if (! defined('ABSPATH')) {
 	exit(1);
 }
 
-UbrT::group('ClickUp → Prospects: synchronizacja statusów i szkic sekwencji (mock)');
+UbrT::group('ClickUp → Pipeline: synchronizacja statusów i szkic sekwencji (mock)');
 
 add_filter('ubr/clickup/throttle', '__return_false');
 $GLOBALS['ubrt_cus'] = ['tasks' => [], 'calls' => []];
@@ -94,7 +94,7 @@ $db->delete(Tables::CLICKUP_EXPORTS, ['organization_id' => $orgF, 'task_id' => '
 $r = $cusSync();
 $p1 = app(PipelineRepository::class)->prospectForCompany($orgF, $cS);
 $seq = $db->row("SELECT * FROM {$db->table(Tables::SEQ_SEQUENCES)} WHERE organization_id = %d AND company_id = %d", $orgF, $cS);
-UbrT::ok($p1['status'] === 'mailing' && $r['applied'] === 1, 'CUS-5. status „Cold mail” w ClickUp → „Mailing” w Prospects');
+UbrT::ok($p1['status'] === 'mailing' && $r['applied'] === 1, 'CUS-5. status „Cold mail” w ClickUp → kolumna „Cold Mail” w Pipeline');
 UbrT::ok($seq && $seq['status'] === 'draft' && (int) $seq['owner_user_id'] === $uF1 && (int) $seq['campaign_id'] === $campId && $seq['recipient_email'] === 'biuro@cus-sync.ubrtest.pl', 'CUS-6. szkic sekwencji z kampanii dla opiekuna firmy (odbiorca: ogólny e-mail), bez uruchomienia wysyłki');
 UbrT::ok(app(PipelineRepository::class)->prospectForCompany($orgF, $cS2)['status'] !== 'mailing', 'CUS-7. zadanie bez powiązania z firmą nie zmienia żadnego prospektu');
 $ev = $db->row("SELECT * FROM {$db->table(Tables::PROSPECT_EVENTS)} WHERE organization_id = %d AND prospect_id = %d AND type = 'clickup_status' ORDER BY id DESC LIMIT 1", $orgF, (int) $p1['id']);
@@ -112,8 +112,29 @@ $cusTask('cus1', 'to do');
 $cusSync();
 $cusTask('cus1', 'Cold mail');
 $cusSync();
-UbrT::ok(app(PipelineRepository::class)->prospectForCompany($orgF, $cS)['status'] === 'mailing' && (int) $db->value("SELECT COUNT(*) FROM {$db->table(Tables::SEQ_SEQUENCES)} WHERE organization_id = %d AND company_id = %d", $orgF, $cS) === 1, 'CUS-10. ponowna zmiana na „Cold mail” → znów Mailing, bez duplikatu szkicu');
+UbrT::ok(app(PipelineRepository::class)->prospectForCompany($orgF, $cS)['status'] === 'mailing' && (int) $db->value("SELECT COUNT(*) FROM {$db->table(Tables::SEQ_SEQUENCES)} WHERE organization_id = %d AND company_id = %d", $orgF, $cS) === 1, 'CUS-10. ponowna zmiana na „Cold mail” → znów Cold Mail, bez duplikatu szkicu');
 UbrT::ok(! in_array(true, array_map(fn ($c) => ! str_starts_with($c, 'GET '), $GLOBALS['ubrt_cus']['calls']), true), 'CUS-11. synchronizacja tylko CZYTA z ClickUp (bez zmian zadań i statusów)');
+
+
+// Karta w Pipeline: kampania, odbiorca i stan sekwencji; „Wyślij…” tylko dla szkicu i jego opiekuna.
+$boardCard = function (int $user, string $status, int $companyId) {
+	$b = ubrt_rest($user, 'GET', '/pipeline/board', ['status' => $status, 'per_column' => 50]);
+	$items = $b['data']['columns'][0]['items'] ?? [];
+
+	return array_values(array_filter($items, fn ($c) => $c['company_id'] === $companyId))[0] ?? null;
+};
+$card = $boardCard($uF1, 'mailing', $cS);
+UbrT::ok($card && ($card['sequence']['campaign'] ?? '') === 'Cold mail ubrtest' && $card['sequence']['status'] === 'draft' && $card['sequence']['recipient'] === 'biuro@cus-sync.ubrtest.pl' && $card['sequence']['can_manage'] === true, 'CUS-12. Pipeline: karta Cold Mail pokazuje kampanię, odbiorcę i szkic (do wysłania przez opiekuna)');
+UbrT::ok(($boardCard($uF2, 'mailing', $cS)['sequence']['can_manage'] ?? null) === false, 'CUS-12. inny pracownik widzi sekwencję, ale nie może jej wysłać');
+
+// Reguła „Cold call” → kolumna Cold Call (bez kampanii, bez szkicu).
+$db->insert(Tables::CLICKUP_EXPORTS, ['organization_id' => $orgF, 'company_id' => $cS2, 'user_id' => $uF1, 'connection_id' => $connF1, 'workspace_id' => '901', 'list_id' => 'LS1', 'task_id' => 'cus2', 'export_status' => 'success', 'created_at' => $now, 'updated_at' => $now]);
+ubrt_rest($uF, 'POST', '/clickup/status-sync', ['rules' => [['clickup_status' => 'cold mail', 'pipeline_status' => 'mailing', 'campaign_id' => $campId], ['clickup_status' => 'Cold call', 'pipeline_status' => 'cold_call', 'campaign_id' => null]]]);
+$cusTask('cus2', 'Cold call');
+$cusSync();
+$card2 = $boardCard($uF1, 'cold_call', $cS2);
+UbrT::ok($card2 && $card2['sequence'] === null && (int) $db->value("SELECT COUNT(*) FROM {$db->table(Tables::SEQ_SEQUENCES)} WHERE organization_id = %d AND company_id = %d", $orgF, $cS2) === 0, 'CUS-13. „Cold call” w ClickUp → kolumna Cold Call w Pipeline, bez szkicu sekwencji');
+$db->delete(Tables::CLICKUP_EXPORTS, ['organization_id' => $orgF, 'task_id' => 'cus2']);
 
 $db->delete(Tables::CLICKUP_EXPORTS, ['organization_id' => $orgF, 'task_id' => 'cus1']);
 $db->execute("DELETE FROM {$db->table(Tables::SEQ_MESSAGES)} WHERE organization_id = %d", $orgF);

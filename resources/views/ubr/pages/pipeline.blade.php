@@ -82,6 +82,22 @@
 										@include('ubr.partials.icon', ['name' => 'clock', 'class' => 'size-3.5'])
 										<span :class="card.overdue ? 'text-danger font-bold' : 'text-ink-soft'" x-text="(card.overdue ? 'Zaległe: ' : '') + $store.ubr.date(card.next_action_at)"></span>
 									</div>
+									<template x-if="card.sequence">
+										<div class="mt-2 rounded-lg border border-line bg-canvas px-2 py-1.5 text-[11px] leading-snug">
+											<div class="flex items-center gap-1.5">
+												<span class="font-semibold truncate flex-1 min-w-0" x-text="card.sequence.campaign" :title="'Kampania: ' + card.sequence.campaign"></span>
+												<span :class="seqBadge(card.sequence)" x-text="card.sequence.status_label"></span>
+											</div>
+											<div class="text-ink-muted truncate" x-text="(card.sequence.recipient ? 'Do: ' + card.sequence.recipient : 'Brak odbiorcy') + (card.sequence.status === 'draft' ? '' : ' · wysłano ' + card.sequence.sent + '/' + card.sequence.steps) + (card.sequence.test_mode ? ' · tryb testowy' : '')"></div>
+											<div class="text-ink-muted" x-show="card.sequence.next_send_at && ['scheduled', 'active'].includes(card.sequence.status)" x-text="'Następna: ' + $store.ubr.date(card.sequence.next_send_at)"></div>
+											<div class="text-danger font-semibold" x-show="card.sequence.missing.length" x-text="'Brakuje: ' + card.sequence.missing.join(', ')"></div>
+											<button type="button" class="ubr-btn-primary ubr-btn-sm w-full mt-1.5" x-show="card.sequence.status === 'draft' && card.sequence.can_manage" @click="openMailing(card)">Wyślij…</button>
+											<button type="button" class="ubr-btn-ghost ubr-btn-sm w-full mt-1.5" x-show="card.sequence.status !== 'draft' || !card.sequence.can_manage" @click="openMailing(card)">Podgląd sekwencji</button>
+										</div>
+									</template>
+									<template x-if="!card.sequence && card.status === 'mailing'">
+										<button type="button" class="ubr-btn-ghost ubr-btn-sm w-full mt-2" @click="openMailing(card)">Przypisz kampanię…</button>
+									</template>
 									<div class="mt-2 grid grid-cols-2 gap-1.5" x-show="canManage">
 										<label class="sr-only" :for="'mv-' + card.prospect_id">Przenieś do</label>
 										<select :id="'mv-' + card.prospect_id" class="ubr-input h-7 text-[11px] px-1.5" @change="move(card, $event.target.value); $event.target.value = ''" :disabled="!!moving[card.prospect_id]">

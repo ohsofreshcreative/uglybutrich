@@ -49,7 +49,7 @@ final class ActionPriorityEngine
 	public const CONVERSATION_STATUSES = ['contacted', 'follow_up', 'in_discussion', 'proposal_sent'];
 
 	/** Prospekt przed kontaktem (kolejka „Find Decision Maker” obejmuje takie firmy bez wyszukanych decydentów). */
-	public const PRE_CONTACT_STATUSES = ['new', 'qualified', 'to_contact'];
+	public const PRE_CONTACT_STATUSES = ['new', 'qualified', 'to_contact', 'cold_call'];
 
 	/** Analiza strony z danymi (PARTIAL = częściowe pomiary, nadal dowód). */
 	public const ANALYZED = ['completed', 'partial'];
